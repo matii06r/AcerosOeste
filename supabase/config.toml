@@ -1,0 +1,11 @@
+project_id = "dvisdjvzwbfklrpzsuhe"
+
+[functions.mp-create-preference]
+verify_jwt = false
+
+[functions.mp-webhook]
+verify_jwt = false
+
+[functions.send-order-email]
+verify_jwt = false
+
