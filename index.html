@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="Equipamiento gastronómico en acero inoxidable fabricado a medida. Envíos a todo el país." />
+  <link rel="canonical" href="https://acerosoeste.com/" />
+  <meta property="og:type" content="website" />
+  <meta property="og:title" content="Aceros Oeste — Equipamiento gastronómico" />
+  <meta property="og:description" content="Fabricación nacional de equipamiento gastronómico en acero inoxidable, estándar y a medida." />
+  <meta property="og:url" content="https://acerosoeste.com/" />
+  <meta property="og:image" content="https://acerosoeste.com/assets/hero.png" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <title>Acerosoeste — Equipamiento gastronómico</title>
+  <link rel="icon" type="image/png" href="assets/favicon.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css?v=9" />
+  <script type="application/ld+json">{"@context":"https://schema.org","@type":"Store","name":"Aceros Oeste","url":"https://acerosoeste.com/","image":"https://acerosoeste.com/assets/logo-aceros-oeste.png","email":"gestionacerosoeste@gmail.com","telephone":["+54 9 11 3432-2199","+54 9 11 6178-1074"],"address":{"@type":"PostalAddress","streetAddress":"Av. San Martín 4092","addressLocality":"Ciudad Autónoma de Buenos Aires","addressCountry":"AR"},"openingHours":"Mo-Fr 09:00-17:00","sameAs":["https://www.instagram.com/aceros_oeste/","https://www.facebook.com/aceros.oeste.2025"]}</script>
+</head>
+<body>
+  <div class="topbar"><span>Fabricación nacional</span><span>Envíos a todo el país</span><span>Asesoramiento personalizado</span></div>
+  <header class="nav-wrap">
+    <nav class="nav container">
+      <a class="brand" href="#inicio" aria-label="Acerosoeste inicio"><img class="brand-logo" src="assets/logo-aceros-oeste.png" alt="Acerosoeste"><span>ACEROS<b>OESTE</b><small>Equipamiento gastronómico</small></span></a>
+      <button class="menu-btn" aria-label="Abrir menú">☰</button>
+      <div class="nav-links">
+        <a href="#inicio">Inicio</a><a href="#productos">Productos</a><a href="#clientes">Clientes</a><a href="#nosotros">Nosotros</a><a href="#politicas">Políticas</a><a href="#ubicacion">Ubicación</a><a id="adminNavLink" class="hidden" href="#panel-general">Panel general</a>
+      </div>
+      <a id="accountNav" class="account-nav" href="#cuenta" aria-label="Abrir mi cuenta"><span class="person-icon" aria-hidden="true">●</span><span id="accountNavName">Ingresar</span></a>
+      <button class="cart-btn" data-open-cart aria-label="Abrir carrito">Carrito <span class="cart-count">0</span></button>
+    </nav>
+  </header>
+
+  <main>
+    <section id="inicio" class="hero">
+      <div class="container hero-content">
+        <p class="eyebrow">ACERO INOXIDABLE · CALIDAD INDUSTRIAL</p>
+        <h1>Equipamiento que<br><em>trabaja con vos.</em></h1>
+        <p>Diseñamos y fabricamos soluciones gastronómicas resistentes, funcionales y a medida.</p>
+        <div class="hero-actions"><a class="btn cta" href="#productos">Ver productos →</a><a class="btn ghost" target="_blank" rel="noopener" href="https://wa.me/5491134322199?text=Hola%20Acerosoeste%2C%20quisiera%20hacer%20una%20consulta">Pedir asesoramiento</a></div>
+        <div class="hero-stats"><div><b>+10</b><span>Años fabricando</span></div><div><b>100%</b><span>Trabajo a medida</span></div><div><b>Todo el país</b><span>Envíos seguros</span></div></div>
+      </div>
+    </section>
+
+    <section class="trust"><div class="container trust-grid"><div><i>✓</i><span><b>Fabricación propia</b><small>Controlamos cada detalle</small></span></div><div><i>▣</i><span><b>Acero de calidad</b><small>Durabilidad profesional</small></span></div><div><i>⌁</i><span><b>Atención directa</b><small>Hablás con el fabricante</small></span></div><div><i>→</i><span><b>Entrega coordinada</b><small>CABA, GBA y todo el país</small></span></div></div></section>
+
+    <section class="section categories-section">
+      <div class="container"><div class="section-head"><div><p class="eyebrow orange">NUESTRAS LÍNEAS</p><h2>Todo para tu cocina profesional</h2></div><a href="#productos">Ver catálogo completo →</a></div><div id="categoryCards" class="category-grid"></div></div>
+    </section>
+
+    <section id="productos" class="section products-section">
+      <div class="container"><div class="section-head"><div><p class="eyebrow orange">CATÁLOGO</p><h2>Productos destacados</h2><p>Equipamiento listo para trabajar. Consultanos también por medidas especiales.</p></div></div>
+        <div class="filters"><label class="search"><span>⌕</span><input id="searchInput" placeholder="Buscar mesas, bachas, campanas..." /></label><div id="categoryFilters" class="chips"></div></div>
+        <div id="productGrid" class="product-grid"></div><div id="emptyState" class="empty hidden">No encontramos productos con esos filtros.</div><button id="loadMoreProducts" class="btn outline load-more hidden" type="button">Ver más productos</button>
+      </div>
+    </section>
+
+    <section id="producto" class="section product-page hidden"><div class="container"><button class="back-link" id="backToProducts">← Volver al catálogo</button><div id="productPageContent"></div></div></section>
+
+    <section class="custom-banner"><div class="container custom-inner"><div><p class="eyebrow">¿TENÉS UNA MEDIDA ESPECIAL?</p><h2>Lo fabricamos a medida.</h2><p>Contanos qué necesitás y te preparamos una propuesta sin compromiso.</p></div><a class="btn cta" target="_blank" rel="noopener" href="https://wa.me/5491134322199?text=Hola%2C%20necesito%20cotizar%20un%20trabajo%20a%20medida">Cotizar mi proyecto →</a></div></section>
+
+    <section id="nosotros" class="section about"><div class="container about-grid"><div class="about-visual about-photo"><img src="assets/sobre-nosotros.png" alt="Mesada con bacha de acero inoxidable fabricada por Acerosoeste"><div class="experience"><b>+10 años</b><span>fabricando soluciones</span></div></div><div class="about-copy"><p class="eyebrow orange">SOBRE NOSOTROS</p><h2>Conocemos el oficio.<br>Entendemos tu proyecto.</h2><p>Aceros Oeste nació como una empresa familiar y creció haciendo lo que mejor sabemos hacer: transformar acero en soluciones que funcionan todos los días.</p><p>Fabricamos equipamiento gastronómico, trabajos de herrería y piezas especiales en acero inoxidable y hierro. Atendemos tanto a comercios e industrias como a emprendedores y hogares que necesitan algo bien hecho, resistente y pensado para su espacio.</p><p>Nos gusta hablar directamente con cada cliente, entender cómo va a usar el producto y encontrar una respuesta concreta. Por eso trabajamos con medidas estándar, pero también desarrollamos proyectos completamente personalizados.</p><p class="about-closing">No buscamos entregar solamente un mueble: buscamos que recibas una herramienta de trabajo confiable y una atención clara de principio a fin.</p><div class="values"><span><b>Atención directa</b><small>Hablás con quienes fabrican.</small></span><span><b>Fabricación propia</b><small>Controlamos cada etapa.</small></span><span><b>Trabajo a medida</b><small>Adaptado a tu espacio y uso.</small></span><span><b>Compromiso real</b><small>Te acompañamos hasta la entrega.</small></span></div></div></div></section>
+
+    <section id="ubicacion" class="section location"><div class="container"><div class="section-head"><div><p class="eyebrow orange">CONTACTO</p><h2>Vení a conocernos</h2></div></div><div class="location-grid"><div class="contact-card"><h3>Aceros Oeste</h3><div class="contact-row"><i>⌖</i><span><b>Av. San Martín 4092</b><small>Ciudad Autónoma de Buenos Aires</small></span></div><div class="contact-row"><i>◷</i><span><b>Lunes a viernes</b><small>9:00 a 17:00 hs</small></span></div><div class="contact-row"><i>☎</i><span><b>11 3432 2199 / 11 6178 1074</b><small>gestionacerosoeste@gmail.com</small></span></div><a class="btn cta full" target="_blank" rel="noopener" href="https://wa.me/5491134322199">Escribir por WhatsApp</a></div><iframe title="Mapa Acerosoeste" loading="lazy" referrerpolicy="no-referrer-when-downgrade" src="https://www.google.com/maps?q=Av.%20San%20Martin%204092%20Buenos%20Aires&output=embed"></iframe></div></div></section>
+
+    <section id="clientes" class="section clients-section"><div class="container"><div class="section-head"><div><p class="eyebrow orange">TRABAJOS REALIZADOS</p><h2>Clientes que confiaron en nosotros</h2><p>Equipamiento fabricado para marcas, comercios y proyectos gastronómicos reales.</p></div></div><div id="clientsGrid" class="clients-grid"></div></div></section>
+
+    <section id="cliente-detalle" class="section client-detail-page standalone-page hidden"><div class="container"><a class="back-link" href="#clientes">← Volver a clientes</a><div id="clientDetailContent"></div></div></section>
+
+    <section id="politicas" class="section policy-page standalone-page hidden"><div class="container policy-shell"><a class="back-link" href="#inicio">← Volver a la tienda</a><p class="eyebrow orange">INFORMACIÓN DE COMPRA</p><h1>Pagos, envíos y políticas</h1><p class="policy-lead">Queremos que cada etapa de tu compra sea clara: desde la forma de pago hasta la entrega y la atención posterior.</p><div class="policy-grid">
+      <article><h2>Formas de pago</h2><p>Podés pagar mediante Mercado Pago, transferencia bancaria, depósito o efectivo coordinado previamente. Las condiciones y el importe final se informan antes de confirmar la operación.</p><p>Los planes financiados o en cuotas pueden tener un costo financiero, informado claramente antes del pago. Un pago único con tarjeta mantiene el precio publicado.</p></article>
+      <article><h2>Transferencia, depósito o efectivo</h2><p>Para transferencia o depósito, solicitá los datos bancarios y enviá el comprobante. El pedido se considera acreditado cuando verificamos el ingreso. Para efectivo, coordiná previamente el pago y el retiro.</p></article>
+      <article><h2>Retiro por el local</h2><p>Podés retirar sin costo de envío cuando confirmemos que el producto está terminado o disponible. El día y horario se coordinan con ventas dentro del horario de atención.</p></article>
+      <article><h2>Envíos a todo el país</h2><p>Realizamos entregas en CABA y GBA mediante flete coordinado. Para el interior enviamos por Via Cargo o acercamos el pedido al transporte elegido por el cliente. El costo depende del destino, volumen, peso y transportista, y se confirma antes del despacho.</p></article>
+      <article><h2>Plazos de entrega</h2><p>Los productos disponibles suelen entregarse entre 3 y 6 días hábiles después de acreditado el pago. Los trabajos a medida o sin stock tienen un plazo específico informado en la cotización.</p></article>
+      <article><h2>Cambios, devoluciones y reclamos</h2><p>Si recibís un producto con daño, faltante o diferencia respecto de lo acordado, contactanos lo antes posible con fotos, número de pedido y detalle del inconveniente. Evaluaremos el caso y coordinaremos la solución correspondiente conforme a la normativa aplicable.</p><p>Los productos estándar sin uso se evalúan según su estado y las condiciones legales vigentes. Los trabajos hechos a medida o personalizados no pueden reasignarse con facilidad. Toda modificación solicitada después de aprobar medidas, plano o fabricación puede tener un costo adicional por chapa, insumos, mano de obra y maquinaria; siempre se informa antes de realizarla.</p></article>
+      <article><h2>Recepción del pedido</h2><p>Antes de firmar la recepción, revisá el embalaje y el estado general. Si observás golpes o roturas del transporte, dejá constancia en el comprobante y comunicate con nosotros inmediatamente.</p></article>
+      <article><h2>Atención personalizada</h2><p>Ante cualquier duda escribinos a gestionacerosoeste@gmail.com o por WhatsApp. Conservá la cotización, los comprobantes y el número de pedido para agilizar la gestión.</p></article>
+    </div><div class="policy-cta"><h2>¿Todavía tenés una consulta?</h2><p>Hablá directamente con nuestro equipo antes de comprar.</p><a class="btn cta" href="https://wa.me/5491134322199" target="_blank" rel="noopener">Consultar por WhatsApp</a></div></div></section>
+
+    <section id="cuenta" class="section account-section standalone-page hidden"><div class="container account-page-container"><div class="account-page-heading"><p class="eyebrow orange">ACEROSOESTE</p><h1 id="accountTitle">Mi cuenta</h1></div><div id="accountContent" class="account-card"></div></div></section>
+
+    <section id="panel-general" class="section admin-page standalone-page hidden"><div class="container"><a class="back-link" href="#inicio">← Volver a la tienda</a><div class="section-head"><div><p class="eyebrow orange">ADMINISTRACIÓN</p><h2>Panel general</h2><p>Productos, stock, pedidos y configuración de la tienda.</p></div></div><div id="adminPanelContent" class="account-card"></div></div></section>
+
+    <section id="cambiar-contrasena" class="section account-section standalone-page hidden"><div class="container auth-shell"><div class="auth-intro"><p class="eyebrow orange">SEGURIDAD</p><h1>Protegé<br><em>tu cuenta.</em></h1><p>Elegí una contraseña nueva y confirmala antes de guardar el cambio.</p></div><div><p class="eyebrow orange">RECUPERACIÓN</p><h2>Nueva contraseña</h2><div id="passwordUpdateContent" class="account-card"></div></div></div></section>
+  </main>
+
+  <footer><div class="container footer-grid"><div class="footer-brand"><div class="brand"><img class="brand-logo" src="assets/logo-aceros-oeste.png" alt="Acerosoeste"><span>ACEROS<b>OESTE</b></span></div><p>Tienda Online de AcerosOeste especializada en equipamiento gastronómico de acero inoxidable para acompañar tu crecimiento.</p><div class="social"><a target="_blank" rel="noopener" href="https://www.instagram.com/aceros_oeste/">Instagram</a><a target="_blank" rel="noopener" href="https://www.facebook.com/aceros.oeste.2025">Facebook</a><a target="_blank" rel="noopener" href="https://wa.me/5491134322199">WhatsApp</a></div></div><div><h4>Sitio</h4><a href="#inicio">Inicio</a><a href="#productos">Productos</a><a href="#clientes">Nuestros clientes</a><a href="#nosotros">Sobre nosotros</a><a href="#politicas">Pagos, envíos y políticas</a><a href="#cuenta">Mi cuenta</a></div><div><h4>Categorías</h4><div id="footerCategories"></div></div><div><h4>Contactanos</h4><p>11 3432 2199<br>11 6178 1074</p><a href="mailto:gestionacerosoeste@gmail.com">gestionacerosoeste@gmail.com</a><p>Av. San Martín 4092<br>Lunes a viernes de 9:00 a 17:00 hs</p></div></div><div class="container payment-footer"><h4>Medios de pago</h4><div class="payment-logos" aria-label="Medios de pago aceptados"><span class="payment-brand visa" title="Visa"><svg viewBox="0 0 80 30" role="img" aria-label="Visa"><text x="40" y="21">VISA</text></svg></span><span class="payment-brand mastercard" title="Mastercard"><svg viewBox="0 0 80 30" role="img" aria-label="Mastercard"><circle cx="32" cy="15" r="11"/><circle cx="48" cy="15" r="11"/><text x="40" y="29">mastercard</text></svg></span><span class="payment-brand amex" title="American Express"><svg viewBox="0 0 80 30" role="img" aria-label="American Express"><rect x="5" y="3" width="70" height="24" rx="2"/><text x="40" y="20">AMEX</text></svg></span><span class="payment-brand cabal" title="Cabal"><svg viewBox="0 0 80 30" role="img" aria-label="Cabal"><circle cx="21" cy="15" r="11"/><text x="51" y="20">CABAL</text></svg></span><span class="payment-brand naranja" title="Naranja X"><svg viewBox="0 0 80 30" role="img" aria-label="Naranja X"><rect x="5" y="3" width="70" height="24" rx="5"/><text x="40" y="20">NARANJA X</text></svg></span><span class="payment-brand mercadopago" title="Mercado Pago"><svg viewBox="0 0 80 30" role="img" aria-label="Mercado Pago"><ellipse cx="21" cy="15" rx="16" ry="11"/><path d="M12 15c5-5 9 5 14 0s9 4 13 0"/><text x="57" y="13">mercado</text><text x="57" y="23">pago</text></svg></span><span class="payment-brand transferencia" title="Transferencia bancaria"><svg viewBox="0 0 80 30" role="img" aria-label="Transferencia bancaria"><path d="M8 11L22 4l14 7v3H8zm3 5h4v7h-4zm9 0h4v7h-4zm9 0h4v7h-4zM7 25h30v3H7z"/><text x="59" y="18">TRANSF.</text></svg></span></div></div><div class="container footer-bottom"><span>© 2026 Acerosoeste.com — Todos los derechos reservados.</span><span><a href="#politicas">Políticas</a> · <a href="#cuenta">Administración</a></span></div></footer>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <a class="whatsapp-float" target="_blank" rel="noopener" href="https://wa.me/5491134322199?text=Hola%20Aceros%20Oeste%2C%20quisiera%20hacer%20una%20consulta" aria-label="Hablar con Aceros Oeste por WhatsApp"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M16 3a12 12 0 0 0-10.4 18l-1.7 6.2 6.4-1.7A12 12 0 1 0 16 3Zm0 21.8c-1.9 0-3.7-.5-5.3-1.5l-.4-.2-3.8 1 1-3.7-.2-.4a9.8 9.8 0 1 1 8.7 4.8Zm5.4-7.3c-.3-.1-1.7-.8-2-.9-.2-.1-.4-.1-.6.2l-.9 1c-.2.2-.3.2-.6.1a8 8 0 0 1-2.4-1.5 9 9 0 0 1-1.6-2c-.2-.3 0-.5.1-.6l.5-.6.2-.5c.1-.2 0-.4 0-.5l-.9-2.1c-.2-.6-.5-.5-.7-.5h-.6c-.2 0-.5.1-.8.4-.3.3-1 1-1 2.5s1.1 2.9 1.2 3.1c.1.2 2.1 3.3 5.2 4.6.7.3 1.3.5 1.7.6.7.2 1.4.2 1.9.1.6-.1 1.7-.7 1.9-1.4.2-.7.2-1.3.2-1.4-.1-.2-.3-.3-.6-.4Z"/></svg><span>WhatsApp</span></a>
+  <div id="modal" class="modal hidden" role="dialog" aria-modal="true"><div class="modal-backdrop" data-close></div><div id="modalPanel" class="modal-panel"></div></div>
+  <aside id="cartDrawer" class="drawer hidden"><div class="drawer-backdrop" data-close-cart></div><div class="drawer-panel"><div class="drawer-head"><div><p class="eyebrow orange">TU COMPRA</p><h2>Carrito</h2></div><button data-close-cart>×</button></div><div id="cartItems" class="cart-items"></div><div id="cartSummary"></div></div></aside>
+  <noscript><div class="notice">Para usar la tienda necesitás activar JavaScript en el navegador.</div></noscript>
+  <script src="assets/vendor/supabase.js?v=1"></script>
+  <script src="config.js"></script>
+  <script src="app.js?v=13"></script>
+</body>
+</html>
