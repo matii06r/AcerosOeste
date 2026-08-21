@@ -16,6 +16,10 @@ const adminUsersMigration = readFileSync(
   new URL("supabase/migrations/008_admin_users_and_profile_email.sql", root),
   "utf8",
 );
+const realtimeMigration = readFileSync(
+  new URL("supabase/migrations/009_realtime_sync_and_chat_deletion.sql", root),
+  "utf8",
+);
 const rows = {
   categories: [
     {
@@ -119,8 +123,37 @@ function query(table) {
 }
 let authListener;
 let activeSession = null;
+const realtimeSubscriptions = [];
+function emitRealtime(table, payload) {
+  realtimeSubscriptions
+    .filter(
+      (subscription) =>
+        !subscription.channel.removed &&
+        subscription.config.table === table &&
+        (subscription.config.event === "*" ||
+          subscription.config.event === payload.eventType),
+    )
+    .forEach((subscription) => subscription.callback(payload));
+}
 const client = {
   from: (table) => query(table),
+  channel: (name) => {
+    const channel = {
+      name,
+      removed: false,
+      on(_type, config, callback) {
+        realtimeSubscriptions.push({ channel, config, callback });
+        return channel;
+      },
+      subscribe() {
+        return channel;
+      },
+    };
+    return channel;
+  },
+  removeChannel: (channel) => {
+    channel.removed = true;
+  },
   auth: {
     getSession: async () => ({ data: { session: activeSession } }),
     onAuthStateChange: (listener) => {
@@ -145,13 +178,37 @@ const client = {
       error: null,
     }),
   },
-  rpc: async () => ({ data: null, error: null }),
+  rpc: async (name, values) => {
+    if (name === "cancel_own_order") {
+      const order = rows.orders.find((item) => item.id === values.p_order_id);
+      if (order) order.status = "cancelled";
+    }
+    if (name === "hide_own_order") {
+      const order = rows.orders.find((item) => item.id === values.p_order_id);
+      if (order) order.hidden_by_customer = true;
+    }
+    if (name === "delete_support_message") {
+      rows.support_messages = rows.support_messages.filter(
+        (message) => message.id !== values.p_message_id,
+      );
+    }
+    if (name === "delete_support_conversation") {
+      const id = values.p_conversation_id;
+      rows.support_conversations = Array.isArray(rows.support_conversations)
+        ? rows.support_conversations.filter((item) => item.id !== id)
+        : [];
+      rows.support_messages = rows.support_messages.filter(
+        (message) => message.conversation_id !== id,
+      );
+    }
+    return { data: null, error: null };
+  },
 };
 const executable = html
   .replace('<script src="assets/vendor/supabase.js?v=1"></script>', "")
   .replace('<script src="config.js"></script>', "")
   .replace(
-    '<script src="app.js?v=15"></script>',
+    '<script src="app.js?v=16"></script>',
     `<script>${app.replaceAll("</script>", "<\\/script>")}</script>`,
   );
 const errors = [];
@@ -294,6 +351,27 @@ assert(
   Boolean(d.querySelector("[data-delete-question]")),
   "El administrador no puede eliminar preguntas",
 );
+rows.questions.push({
+  id: "q-live",
+  product_id: "11111111-1111-4111-8111-111111111111",
+  user_id: "customer-1",
+  question: "¿Esta pregunta aparece en vivo?",
+  answer: null,
+});
+emitRealtime("questions", {
+  eventType: "INSERT",
+  new: {
+    id: "q-live",
+    product_id: "11111111-1111-4111-8111-111111111111",
+  },
+});
+await new Promise((resolve) => setTimeout(resolve, 220));
+assert(
+  d.querySelector(".question-list")?.textContent.includes(
+    "¿Esta pregunta aparece en vivo?",
+  ),
+  "Las preguntas nuevas no aparecen en tiempo real",
+);
 d.querySelector("[data-edit]")?.click();
 assert(
   d.querySelector("#productPhotos")?.multiple &&
@@ -315,6 +393,22 @@ assert(
   d.querySelectorAll("#footerCategories a").length === 1,
   "Las categorías no aparecen al final de la página",
 );
+dom.window.location.hash = "#panel-general";
+await new Promise((resolve) => setTimeout(resolve, 30));
+d.querySelector("#ordersBtn")?.click();
+await new Promise((resolve) => setTimeout(resolve, 30));
+rows.orders[0].status = "cancelled";
+emitRealtime("orders", {
+  eventType: "UPDATE",
+  old: { id: "order-1", status: "pending" },
+  new: { id: "order-1", status: "cancelled" },
+});
+await new Promise((resolve) => setTimeout(resolve, 220));
+assert(
+  d.querySelector('[data-order-status="order-1"]')?.value === "cancelled",
+  "La cancelación no se sincroniza en el panel del administrador",
+);
+rows.orders[0].status = "pending";
 await authListener?.("SIGNED_OUT", null);
 await new Promise((resolve) => setTimeout(resolve, 30));
 rows.profiles = {
@@ -356,11 +450,55 @@ rows.support_conversations = {
   user_id: "customer-1",
   status: "open",
 };
+rows.support_messages = [
+  {
+    id: "message-own",
+    conversation_id: "conversation-1",
+    sender_id: "customer-1",
+    body: "Mensaje del cliente",
+    created_at: "2026-08-20T10:00:00Z",
+  },
+];
 d.querySelector("#accountChatTab")?.click();
 await new Promise((resolve) => setTimeout(resolve, 30));
 assert(
   Boolean(d.querySelector("#customerChatForm")),
   "El chat privado del cliente no se abre",
+);
+assert(
+  Boolean(d.querySelector('[data-delete-chat-message="message-own"]')) &&
+    Boolean(d.querySelector("#deleteCustomerConversation")),
+  "El cliente no puede eliminar sus mensajes o su chat",
+);
+d.querySelector('[data-delete-chat-message="message-own"]')?.click();
+await new Promise((resolve) => setTimeout(resolve, 40));
+assert(
+  !d.querySelector("#customerChatMessages")?.textContent.includes(
+    "Mensaje del cliente",
+  ),
+  "El borrado de un mensaje propio no actualiza el chat",
+);
+rows.support_messages.push({
+  id: "message-admin",
+  conversation_id: "conversation-1",
+  sender_id: "admin-1",
+  body: "Respuesta en tiempo real",
+  created_at: "2026-08-20T10:01:00Z",
+});
+emitRealtime("support_messages", {
+  eventType: "INSERT",
+  new: {
+    id: "message-admin",
+    conversation_id: "conversation-1",
+  },
+});
+await new Promise((resolve) => setTimeout(resolve, 160));
+assert(
+  d.querySelector("#customerChatMessages")?.textContent.includes(
+    "Respuesta en tiempo real",
+  ) &&
+    !d.querySelector('[data-delete-chat-message="message-admin"]'),
+  "Los mensajes nuevos no aparecen en tiempo real",
 );
 assert(
   paymentFunction.includes('MP_ENVIRONMENT') &&
@@ -380,6 +518,13 @@ assert(
     adminUsersMigration.includes("from auth.users") &&
     adminUsersMigration.includes("sync_profile_email"),
   "La migración de usuarios no completa o sincroniza los emails",
+);
+assert(
+  realtimeMigration.includes("delete_support_message") &&
+    realtimeMigration.includes("delete_support_conversation") &&
+    realtimeMigration.includes("supabase_realtime") &&
+    realtimeMigration.includes("replica identity full"),
+  "La migración de tiempo real y borrado seguro está incompleta",
 );
 await authListener?.("SIGNED_OUT", null);
 await new Promise((resolve) => setTimeout(resolve, 30));
@@ -414,5 +559,5 @@ if (errors.length) {
   process.exit(1);
 }
 console.log(
-  "QA OK: catálogo, carrito consistente, pagos autenticados, usuarios, pedidos, chat y administración",
+  "QA OK: catálogo, carrito, pagos, usuarios y sincronización en vivo de pedidos, preguntas y chat",
 );

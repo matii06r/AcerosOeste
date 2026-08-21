@@ -104,7 +104,13 @@ const state = {
   loading: true,
   usingFallback: false,
   chatChannel: null,
+  liveChannel: null,
+  accountView: "orders",
+  adminView: "products",
+  activeConversationId: null,
+  activeConversationName: "",
 };
+const realtimeTimers = new Map();
 const isAdmin = () => state.profile?.role === "admin";
 const cartStorageKey = () => `ao_cart_${state.user?.id || "guest"}`;
 const slugify = (text) =>
@@ -196,7 +202,7 @@ function mapProduct(row) {
   };
 }
 
-async function loadStoreData() {
+async function loadStoreData({ route = true } = {}) {
   const [
     { data: categories, error: catError },
     { data: products, error: productError },
@@ -257,7 +263,125 @@ async function loadStoreData() {
   renderCategories();
   renderProducts();
   renderCartCount();
-  handleRoute();
+  if (route) handleRoute();
+}
+
+function scheduleRealtimeRefresh(key, callback, delay = 140) {
+  clearTimeout(realtimeTimers.get(key));
+  realtimeTimers.set(
+    key,
+    setTimeout(async () => {
+      realtimeTimers.delete(key);
+      try {
+        await callback();
+      } catch (error) {
+        console.error(`No se pudo sincronizar ${key}`, error);
+      }
+    }, delay),
+  );
+}
+async function refreshStoreFromRealtime() {
+  const hash = decodeURIComponent(location.hash.slice(1));
+  await loadStoreData({ route: false });
+  if (hash.startsWith("producto/")) {
+    await showProductPage(hash.slice("producto/".length));
+    return;
+  }
+  if (!isAdmin() || hash !== "panel-general") return;
+  if (state.adminView === "products") openAdminProducts();
+  else if (state.adminView === "categories") openCategories();
+  else if (state.adminView === "clients") openClientManager();
+  else if (state.adminView === "settings") openSettings();
+}
+function refreshOrdersFromRealtime() {
+  const hash = decodeURIComponent(location.hash.slice(1));
+  if (isAdmin() && hash === "panel-general" && state.adminView === "orders") {
+    return openAdminOrders();
+  }
+  if (
+    state.user &&
+    !isAdmin() &&
+    hash === "cuenta" &&
+    state.accountView === "orders"
+  ) {
+    return loadOrders();
+  }
+}
+function refreshProfilesFromRealtime() {
+  const hash = decodeURIComponent(location.hash.slice(1));
+  if (isAdmin() && hash === "panel-general" && state.adminView === "users") {
+    return openAdminUsers();
+  }
+}
+function handleConversationRealtime(payload) {
+  const hash = decodeURIComponent(location.hash.slice(1));
+  const changedId = payload?.new?.id || payload?.old?.id;
+  if (
+    isAdmin() &&
+    hash === "panel-general" &&
+    state.adminView === "chats"
+  ) {
+    scheduleRealtimeRefresh("admin-chats", openAdminChats);
+    return;
+  }
+  if (
+    payload?.eventType === "DELETE" &&
+    changedId &&
+    changedId === state.activeConversationId
+  ) {
+    stopChatRealtime();
+    state.activeConversationId = null;
+    if (isAdmin()) scheduleRealtimeRefresh("deleted-admin-chat", openAdminChats);
+    else if (hash === "cuenta" && state.accountView === "chat")
+      scheduleRealtimeRefresh("deleted-customer-chat", openCustomerChat);
+  }
+}
+function stopAppRealtime() {
+  if (!state.liveChannel || !supabase?.removeChannel) return;
+  supabase.removeChannel(state.liveChannel);
+  state.liveChannel = null;
+}
+function startAppRealtime() {
+  stopAppRealtime();
+  if (!supabase?.channel) return;
+  const channel = supabase.channel(
+    `aceros-live-${state.user?.id || "public"}-${Date.now()}`,
+  );
+  ["products", "categories", "client_projects", "store_settings"].forEach(
+    (table) =>
+      channel.on(
+        "postgres_changes",
+        { event: "*", schema: "public", table },
+        () => scheduleRealtimeRefresh("store", refreshStoreFromRealtime),
+      ),
+  );
+  ["orders", "order_items"].forEach((table) =>
+    channel.on(
+      "postgres_changes",
+      { event: "*", schema: "public", table },
+      () => scheduleRealtimeRefresh("orders", refreshOrdersFromRealtime),
+    ),
+  );
+  channel
+    .on(
+      "postgres_changes",
+      { event: "*", schema: "public", table: "questions" },
+      (payload) =>
+        scheduleRealtimeRefresh("questions", () =>
+          refreshVisibleQuestions(payload),
+        ),
+    )
+    .on(
+      "postgres_changes",
+      { event: "*", schema: "public", table: "support_conversations" },
+      handleConversationRealtime,
+    )
+    .on(
+      "postgres_changes",
+      { event: "*", schema: "public", table: "profiles" },
+      () => scheduleRealtimeRefresh("profiles", refreshProfilesFromRealtime),
+    );
+  state.liveChannel = channel.subscribe();
 }
 
 async function restoreSession() {
@@ -308,6 +432,7 @@ async function applySession(session) {
     renderCartCount();
   }
   updateSessionNavigation();
+  startAppRealtime();
   if (state.recoveryMode) {
     renderProducts();
     handleRoute();
@@ -527,15 +652,7 @@ async function showProductPage(slug) {
   document
     .querySelector("#questionForm")
     ?.addEventListener("submit", (e) => submitQuestion(e, product));
-  document
-    .querySelectorAll("[data-answer]")
-    .forEach(
-      (n) => (n.onclick = () => answerQuestion(product, n.dataset.answer)),
-    );
-  document.querySelectorAll("[data-delete-question]").forEach((button) => {
-    button.onclick = () =>
-      deleteQuestion(product, button.dataset.deleteQuestion);
-  });
+  bindQuestionActions(product);
   window.scrollTo(0, 0);
 }
 function renderQuestionList(questions) {
@@ -548,6 +665,35 @@ function renderQuestionList(questions) {
     })
     .join("");
 }
+function bindQuestionActions(product) {
+  const list = document.querySelector("#producto .question-list");
+  list
+    ?.querySelectorAll("[data-answer]")
+    .forEach(
+      (node) =>
+        (node.onclick = () => answerQuestion(product, node.dataset.answer)),
+    );
+  list?.querySelectorAll("[data-delete-question]").forEach((button) => {
+    button.onclick = () =>
+      deleteQuestion(product, button.dataset.deleteQuestion);
+  });
+}
+async function refreshVisibleQuestions(payload = null) {
+  const hash = decodeURIComponent(location.hash.slice(1));
+  if (!hash.startsWith("producto/")) return;
+  const product = state.products.find(
+    (item) => item.slug === hash.slice("producto/".length),
+  );
+  const list = document.querySelector("#producto .question-list");
+  if (!product || !list) return;
+  const changedProductId =
+    payload?.new?.product_id || payload?.old?.product_id || null;
+  if (changedProductId && String(changedProductId) !== String(product.id)) return;
+  const questions = await loadQuestions(product.id);
+  if (!document.body.contains(list)) return;
+  list.innerHTML = renderQuestionList(questions);
+  bindQuestionActions(product);
+}
 async function deleteQuestion(product, questionId) {
   if (!confirm("¿Querés eliminar esta pregunta?")) return;
   const { error } = await supabase
@@ -556,7 +702,7 @@ async function deleteQuestion(product, questionId) {
     .eq("id", questionId);
   if (error) return toast(error.message, "error");
   toast("Pregunta eliminada", "success");
-  showProductPage(product.slug);
+  await refreshVisibleQuestions({ old: { product_id: product.id } });
 }
 async function submitQuestion(event, product) {
   event.preventDefault();
@@ -569,8 +715,9 @@ async function submitQuestion(event, product) {
     .insert({ product_id: product.id, user_id: state.user.id, question: text });
   setBusy(button, false);
   if (error) return toast(error.message, "error");
+  event.target.reset();
   toast("Pregunta publicada");
-  showProductPage(product.slug);
+  await refreshVisibleQuestions({ new: { product_id: product.id } });
 }
 async function answerQuestion(product, questionId) {
   const answer = prompt("Respuesta de Acerosoeste:");
@@ -581,7 +728,7 @@ async function answerQuestion(product, questionId) {
     .eq("id", questionId);
   if (error) return toast(error.message, "error");
   toast("Respuesta publicada");
-  showProductPage(product.slug);
+  await refreshVisibleQuestions({ new: { product_id: product.id } });
 }
 function showMainSections() {
   document
@@ -900,6 +1047,7 @@ function renderAccount() {
     return;
   }
   title.textContent = "Mi cuenta";
+  state.accountView = "orders";
   el.innerHTML = customerDashboard();
   document.querySelector("#logout")?.addEventListener("click", logout);
   if (!isAdmin()) {
@@ -1050,6 +1198,7 @@ function renderPasswordUpdate() {
 }
 async function logout() {
   stopChatRealtime();
+  stopAppRealtime();
   await supabase.auth.signOut();
   location.hash = "cuenta";
   toast("Sesión cerrada");
@@ -1058,6 +1207,7 @@ function customerDashboard() {
   return `<span class="session-badge">${isAdmin() ? "Administrador" : "Cliente"}</span><h3>Hola, ${escapeHtml(state.profile?.full_name || state.user.email)}</h3><p>${escapeHtml(state.user.email)}</p>${isAdmin() ? '<a class="btn cta" href="#panel-general">Abrir panel general</a>' : '<div class="account-tabs"><button class="btn secondary active" id="accountOrdersTab" type="button">Mis pedidos</button><button class="btn secondary" id="accountChatTab" type="button">Chat privado</button></div><div id="accountWorkspace"><div id="ordersList"><div class="empty">Cargando pedidos…</div></div></div>'}<button class="btn outline account-logout" id="logout">Cerrar sesión</button>`;
 }
 function setAccountTab(tab) {
+  state.accountView = tab;
   if (tab === "orders") stopChatRealtime();
   document
     .querySelector("#accountOrdersTab")
@@ -1150,10 +1300,11 @@ function chatMessagesMarkup(messages) {
   if (!messages.length)
     return '<div class="empty">Todavía no hay mensajes. Escribinos tu consulta y te responderemos desde administración.</div>';
   return messages
-    .map(
-      (message) =>
-        `<div class="chat-message ${message.sender_id === state.user.id ? "mine" : "theirs"}"><p>${escapeHtml(message.body)}</p><small>${new Date(message.created_at).toLocaleString("es-AR", { dateStyle: "short", timeStyle: "short" })}</small></div>`,
-    )
+    .map((message) => {
+      const mine = message.sender_id === state.user.id;
+      const canDelete = mine || isAdmin();
+      return `<div class="chat-message ${mine ? "mine" : "theirs"}" data-chat-message="${message.id}"><p>${escapeHtml(message.body)}</p><div class="chat-message-meta"><small>${new Date(message.created_at).toLocaleString("es-AR", { dateStyle: "short", timeStyle: "short" })}</small>${canDelete ? `<button class="chat-delete-message" data-delete-chat-message="${message.id}" type="button">Eliminar</button>` : ""}</div></div>`;
+    })
     .join("");
 }
 async function loadConversationMessages(conversationId, target) {
@@ -1163,7 +1314,14 @@ async function loadConversationMessages(conversationId, target) {
     .eq("conversation_id", conversationId)
     .order("created_at", { ascending: true });
   if (error) throw error;
+  if (!target || !document.body.contains(target)) return;
   target.innerHTML = chatMessagesMarkup(data || []);
+  target.querySelectorAll("[data-delete-chat-message]").forEach((button) => {
+    button.onclick = () =>
+      deleteChatMessage(button.dataset.deleteChatMessage, conversationId, () =>
+        loadConversationMessages(conversationId, target),
+      );
+  });
   target.scrollTop = target.scrollHeight;
 }
 function stopChatRealtime() {
@@ -1179,14 +1337,52 @@ function startChatRealtime(conversationId, refresh) {
     .on(
       "postgres_changes",
       {
-        event: "INSERT",
+        event: "*",
         schema: "public",
         table: "support_messages",
-        filter: `conversation_id=eq.${conversationId}`,
       },
-      refresh,
+      (payload) => {
+        const changedConversationId =
+          payload?.new?.conversation_id || payload?.old?.conversation_id;
+        if (
+          !changedConversationId ||
+          String(changedConversationId) === String(conversationId)
+        ) {
+          scheduleRealtimeRefresh(`chat-${conversationId}`, refresh, 70);
+        }
+      },
     )
     .subscribe();
+}
+async function deleteChatMessage(messageId, conversationId, refresh) {
+  if (!confirm("¿Eliminar este mensaje?")) return;
+  const { error } = await supabase.rpc("delete_support_message", {
+    p_message_id: messageId,
+  });
+  if (error) return toast(error.message || "No se pudo eliminar el mensaje.", "error");
+  toast("Mensaje eliminado", "success");
+  await refresh();
+}
+async function deleteSupportConversation(conversationId, owner = "customer") {
+  if (
+    !confirm(
+      "¿Eliminar toda la conversación? Se borrarán todos sus mensajes y podrás iniciar un chat nuevo.",
+    )
+  )
+    return;
+  const previousId = state.activeConversationId;
+  state.activeConversationId = null;
+  const { error } = await supabase.rpc("delete_support_conversation", {
+    p_conversation_id: conversationId,
+  });
+  if (error) {
+    state.activeConversationId = previousId;
+    return toast(error.message || "No se pudo eliminar la conversación.", "error");
+  }
+  stopChatRealtime();
+  toast("Conversación eliminada. Podés iniciar una nueva.", "success");
+  if (owner === "admin") await openAdminChats();
+  else await openCustomerChat();
 }
 async function sendChatMessage(event, conversationId, refresh) {
   event.preventDefault();
@@ -1206,18 +1402,22 @@ async function sendChatMessage(event, conversationId, refresh) {
   await refresh();
 }
 async function openCustomerChat() {
+  state.accountView = "chat";
   const workspace = document.querySelector("#accountWorkspace");
   if (!workspace) return;
   workspace.innerHTML = '<div class="empty">Abriendo chat privado…</div>';
   try {
     const conversation = await getCustomerConversation();
-    workspace.innerHTML = `<div class="chat-head"><div><h3>Chat con Aceros Oeste</h3><p>Este chat es privado entre tu cuenta y administración.</p></div><button class="btn outline" id="refreshCustomerChat" type="button">Actualizar</button></div><div id="customerChatMessages" class="chat-messages"></div><form id="customerChatForm" class="chat-form"><textarea name="message" maxlength="2000" rows="3" placeholder="Escribí tu consulta…" required></textarea><button class="btn cta" type="submit">Enviar</button></form>`;
+    state.activeConversationId = conversation.id;
+    state.activeConversationName = state.profile?.full_name || "Cliente";
+    workspace.innerHTML = `<div class="chat-head"><div><h3>Chat con Aceros Oeste</h3><p>Este chat es privado y se actualiza automáticamente.</p></div><div class="chat-head-actions"><span class="live-indicator"><i></i> En vivo</span><button class="btn danger" id="deleteCustomerConversation" type="button">Eliminar chat</button></div></div><div id="customerChatMessages" class="chat-messages"></div><form id="customerChatForm" class="chat-form"><textarea name="message" maxlength="2000" rows="3" placeholder="Escribí tu consulta…" required></textarea><button class="btn cta" type="submit">Enviar</button></form>`;
     const refresh = () =>
       loadConversationMessages(
         conversation.id,
         document.querySelector("#customerChatMessages"),
       );
-    document.querySelector("#refreshCustomerChat").onclick = refresh;
+    document.querySelector("#deleteCustomerConversation").onclick = () =>
+      deleteSupportConversation(conversation.id, "customer");
     document.querySelector("#customerChatForm").onsubmit = (event) =>
       sendChatMessage(event, conversation.id, refresh);
     await refresh();
@@ -1248,6 +1448,8 @@ function renderAdminPanel() {
       '<div class="notice">Acceso exclusivo para administración.</div>';
     return;
   }
+  state.adminView = "products";
+  state.activeConversationId = null;
   container.innerHTML = adminDashboard();
   bindAdminDashboard();
 }
@@ -1264,6 +1466,8 @@ function bindAdminProductRows() {
 }
 function openAdminProducts() {
   stopChatRealtime();
+  state.adminView = "products";
+  state.activeConversationId = null;
   document.querySelector("#adminWorkspace").innerHTML = adminProductsMarkup();
   bindAdminProductRows();
 }
@@ -1296,6 +1500,8 @@ function bindAdminDashboard() {
 }
 async function openAdminUsers() {
   stopChatRealtime();
+  state.adminView = "users";
+  state.activeConversationId = null;
   const workspace = document.querySelector("#adminWorkspace");
   workspace.innerHTML = '<div class="empty">Cargando usuarios…</div>';
   const { data, error } = await supabase
@@ -1341,6 +1547,8 @@ function adminUserMarkup(profile) {
 }
 function openCategories() {
   stopChatRealtime();
+  state.adminView = "categories";
+  state.activeConversationId = null;
   const workspace = document.querySelector("#adminWorkspace");
   workspace.innerHTML = `<h3>Categorías del catálogo</h3><form id="categoryForm" class="inline-admin-form"><input name="name" maxlength="70" placeholder="Nombre de la nueva categoría" required><button class="btn cta">Agregar categoría</button></form><div class="category-admin-list">${state.categories.map((category) => `<div class="admin-row"><b>${escapeHtml(category.name)}</b><span>Orden ${category.sort_order || 0}</span><span></span><button class="remove" data-delete-category="${category.id}">Eliminar</button></div>`).join("")}</div>`;
   document.querySelector("#categoryForm").onsubmit = async (event) => {
@@ -1379,6 +1587,8 @@ function openCategories() {
 }
 function openClientManager() {
   stopChatRealtime();
+  state.adminView = "clients";
+  state.activeConversationId = null;
   const ws = document.querySelector("#adminWorkspace");
   ws.innerHTML = `<div class="admin-section-title"><div><h3>Clientes y trabajos</h3><p>Publicá marcas y fotos de los trabajos realizados.</p></div><button class="btn cta" id="addClient">+ Agregar cliente</button></div><div class="client-admin-list">${state.clients.map((client) => `<div class="admin-row"><b>${escapeHtml(client.name)}</b><span>${escapeHtml(client.category || "Cliente")}</span><span>${client.images?.length || 0} fotos</span><div><button class="remove" data-edit-client="${client.id}">Editar</button> <button class="remove" data-delete-client="${client.id}">Eliminar</button></div></div>`).join("") || '<div class="notice">Todavía no agregaste clientes.</div>'}</div>`;
   document.querySelector("#addClient").onclick = () => openClientEditor();
@@ -1424,6 +1634,8 @@ async function saveClient(event, current) {
 }
 function openSettings() {
   stopChatRealtime();
+  state.adminView = "settings";
+  state.activeConversationId = null;
   const ws = document.querySelector("#adminWorkspace");
   ws.innerHTML = `<h3>Configuración de la tienda</h3><form id="settingsForm" class="form-grid"><div class="field"><label>Porcentaje de seña</label><input name="deposit_percentage" type="number" min="1" max="100" value="${state.settings.deposit_percentage || 30}"></div><div class="field"><label>WhatsApp de ventas</label><input name="sales_whatsapp" value="${escapeHtml(state.settings.sales_whatsapp || "")}"></div><div class="field full"><label>Email de contacto</label><input name="contact_email" type="email" value="${escapeHtml(state.settings.contact_email || "")}"></div><button class="btn secondary">Guardar</button></form>`;
   document.querySelector("#settingsForm").onsubmit = async (e) => {
@@ -1447,6 +1659,8 @@ function openSettings() {
 }
 async function openAdminChats() {
   stopChatRealtime();
+  state.adminView = "chats";
+  state.activeConversationId = null;
   const workspace = document.querySelector("#adminWorkspace");
   workspace.innerHTML = '<div class="empty">Cargando conversaciones…</div>';
   const { data: conversations, error } = await supabase
@@ -1470,11 +1684,10 @@ async function openAdminChats() {
   const profileNames = Object.fromEntries(
     profiles.map((profile) => [profile.id, profile.full_name]),
   );
-  workspace.innerHTML = `<div class="admin-section-title"><div><h3>Chats privados</h3><p>Consultas de clientes autenticados. Usá Actualizar para ver mensajes nuevos.</p></div><button class="btn outline" id="refreshAdminChats" type="button">Actualizar</button></div><div class="admin-chat-list">${conversations?.length ? conversations.map((conversation) => {
+  workspace.innerHTML = `<div class="admin-section-title"><div><h3>Chats privados</h3><p>Las conversaciones y los mensajes nuevos aparecen automáticamente.</p></div><span class="live-indicator"><i></i> En vivo</span></div><div class="admin-chat-list">${conversations?.length ? conversations.map((conversation) => {
     const name = profileNames[conversation.user_id] || "Cliente";
     return `<button class="admin-chat-card" type="button" data-open-admin-chat="${conversation.id}" data-admin-chat-name="${escapeHtml(name)}"><span><b>${escapeHtml(name)}</b><small>${conversation.status === "closed" ? "Cerrado" : "Abierto"}</small></span><time>${new Date(conversation.updated_at).toLocaleString("es-AR", { dateStyle: "short", timeStyle: "short" })}</time></button>`;
   }).join("") : '<div class="notice">Todavía no hay conversaciones.</div>'}</div>`;
-  document.querySelector("#refreshAdminChats").onclick = openAdminChats;
   document.querySelectorAll("[data-open-admin-chat]").forEach((button) => {
     button.onclick = () =>
       openAdminConversation(
@@ -1484,15 +1697,19 @@ async function openAdminChats() {
   });
 }
 async function openAdminConversation(conversationId, customerName) {
+  state.adminView = "conversation";
+  state.activeConversationId = conversationId;
+  state.activeConversationName = customerName || "Cliente";
   const workspace = document.querySelector("#adminWorkspace");
-  workspace.innerHTML = `<div class="chat-head"><div><button class="text-button" id="backToAdminChats" type="button">← Volver a chats</button><h3>${escapeHtml(customerName || "Cliente")}</h3><p>Conversación privada con administración.</p></div><button class="btn outline" id="refreshAdminConversation" type="button">Actualizar</button></div><div id="adminChatMessages" class="chat-messages"></div><form id="adminChatForm" class="chat-form"><textarea name="message" maxlength="2000" rows="3" placeholder="Responder al cliente…" required></textarea><button class="btn cta" type="submit">Enviar respuesta</button></form>`;
+  workspace.innerHTML = `<div class="chat-head"><div><button class="text-button" id="backToAdminChats" type="button">← Volver a chats</button><h3>${escapeHtml(customerName || "Cliente")}</h3><p>Conversación privada que se actualiza automáticamente.</p></div><div class="chat-head-actions"><span class="live-indicator"><i></i> En vivo</span><button class="btn danger" id="deleteAdminConversation" type="button">Eliminar chat</button></div></div><div id="adminChatMessages" class="chat-messages"></div><form id="adminChatForm" class="chat-form"><textarea name="message" maxlength="2000" rows="3" placeholder="Responder al cliente…" required></textarea><button class="btn cta" type="submit">Enviar respuesta</button></form>`;
   const refresh = () =>
     loadConversationMessages(
       conversationId,
       document.querySelector("#adminChatMessages"),
     );
   document.querySelector("#backToAdminChats").onclick = openAdminChats;
-  document.querySelector("#refreshAdminConversation").onclick = refresh;
+  document.querySelector("#deleteAdminConversation").onclick = () =>
+    deleteSupportConversation(conversationId, "admin");
   document.querySelector("#adminChatForm").onsubmit = (event) =>
     sendChatMessage(event, conversationId, refresh);
   try {
@@ -1506,6 +1723,8 @@ async function openAdminConversation(conversationId, customerName) {
 }
 async function openAdminOrders() {
   stopChatRealtime();
+  state.adminView = "orders";
+  state.activeConversationId = null;
   const ws = document.querySelector("#adminWorkspace");
   ws.innerHTML = '<div class="empty">Cargando pedidos…</div>';
   const { data, error } = await supabase
