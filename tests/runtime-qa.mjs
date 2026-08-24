@@ -50,6 +50,10 @@ const notificationsMigration = readFileSync(
   ),
   "utf8",
 );
+const adminPublicEmailMigration = readFileSync(
+  new URL("supabase/migrations/015_admin_public_email.sql", root),
+  "utf8",
+);
 const adminNotificationFunction = readFileSync(
   new URL("supabase/functions/send-admin-notification/index.ts", root),
   "utf8",
@@ -103,6 +107,7 @@ const rows = {
     deposit_percentage: 50,
     freight_whatsapp: "5491134322199",
     sales_whatsapp: "5491134322199",
+    contact_email: "gestionacerosoeste@gmail.com",
   },
   profiles: {
     id: "admin-1",
@@ -309,7 +314,7 @@ const executable = html
   .replace('<script src="assets/vendor/supabase.js?v=1"></script>', "")
   .replace('<script src="config.js"></script>', "")
   .replace(
-    '<script src="app.js?v=21"></script>',
+    '<script src="app.js?v=22"></script>',
     `<script>${app.replaceAll("</script>", "<\\/script>")}</script>`,
   );
 const errors = [];
@@ -433,6 +438,15 @@ assert(
     d.querySelector("#notificationCount")?.textContent === "1",
   "El administrador no ve el centro de notificaciones",
 );
+assert(
+  d.querySelector("#accountContent")?.textContent.includes(
+    "gestionacerosoestee@gmail.com",
+  ) &&
+    !d.querySelector("#accountContent")?.textContent.includes(
+      "gestionacerosoeste@gmail.com",
+    ),
+  "La cuenta administrativa todavía muestra el correo anterior",
+);
 dom.window.location.hash = "#panel-general";
 await new Promise((resolve) => setTimeout(resolve, 20));
 assert(
@@ -451,7 +465,7 @@ rows.profiles = [
   {
     id: "admin-1",
     full_name: "Administrador",
-    email: "gestionacerosoeste@gmail.com",
+    email: "gestionacerosoestee@gmail.com",
     phone: "11 3432 2199",
     role: "admin",
     created_at: "2026-08-01T10:00:00Z",
@@ -470,7 +484,7 @@ await new Promise((resolve) => setTimeout(resolve, 30));
 assert(
   d.querySelector("#adminUserList")?.textContent.includes("11 3432 2199") &&
     d.querySelector("#adminUserList")?.textContent.includes(
-      "gestionacerosoeste@gmail.com",
+      "gestionacerosoestee@gmail.com",
     ),
   "El panel no muestra los datos de contacto de los usuarios",
 );
@@ -813,6 +827,13 @@ assert(
     notificationsMigration.includes("'orange'") &&
     notificationsMigration.includes("'sky'"),
   "La migración de notificaciones, nombre administrativo o colores está incompleta",
+);
+assert(
+  adminPublicEmailMigration.includes("gestionacerosoestee@gmail.com") &&
+    adminPublicEmailMigration.includes("gestionacerosoeste@gmail.com") &&
+    adminPublicEmailMigration.includes("public.store_settings") &&
+    adminPublicEmailMigration.includes("public.profiles"),
+  "La migración del correo público administrativo está incompleta",
 );
 assert(
   adminNotificationFunction.includes("ADMIN_EMAIL") &&

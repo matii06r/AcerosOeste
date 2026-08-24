@@ -4,6 +4,8 @@ const money = (value) =>
     currency: "ARS",
     maximumFractionDigits: 0,
   }).format(Number(value) || 0);
+const ADMIN_CONTACT_EMAIL = "gestionacerosoestee@gmail.com";
+const LEGACY_ADMIN_EMAIL = "gestionacerosoeste@gmail.com";
 const hasSupabaseConfig = Boolean(
   window.ACEROS_CONFIG?.SUPABASE_URL &&
     window.ACEROS_CONFIG?.SUPABASE_PUBLISHABLE_KEY,
@@ -104,7 +106,11 @@ const state = {
   categories: [],
   questions: {},
   cart: safeRead("ao_cart_guest", []),
-  settings: { deposit_percentage: 50, freight_whatsapp: "5491134322199" },
+  settings: {
+    deposit_percentage: 50,
+    freight_whatsapp: "5491134322199",
+    contact_email: ADMIN_CONTACT_EMAIL,
+  },
   user: null,
   profile: null,
   filter: "Todos",
@@ -125,6 +131,16 @@ const state = {
 };
 const realtimeTimers = new Map();
 const isAdmin = () => state.profile?.role === "admin";
+const normalizedContactEmail = (value) => {
+  const email = String(value || "").trim();
+  return !email || email.toLowerCase() === LEGACY_ADMIN_EMAIL
+    ? ADMIN_CONTACT_EMAIL
+    : email;
+};
+const accountDisplayEmail = () =>
+  isAdmin()
+    ? normalizedContactEmail(state.settings?.contact_email)
+    : String(state.user?.email || "").trim();
 const cartStorageKey = () => `ao_cart_${state.user?.id || "guest"}`;
 const pendingCheckoutKey = "ao_pending_checkout";
 const storeCacheKey = "ao_store_cache_v1";
@@ -358,7 +374,12 @@ async function loadStoreData({ route = true, retry = true } = {}) {
     state.usingFallback = false;
     persistStoreCache();
   }
-  if (settings) state.settings = settings;
+  if (settings) {
+    state.settings = {
+      ...settings,
+      contact_email: normalizedContactEmail(settings.contact_email),
+    };
+  }
   state.loading = false;
   reconcileCart();
   renderClients();
@@ -1581,12 +1602,15 @@ async function logout() {
   toast("Sesión cerrada");
 }
 function customerDashboard() {
-  const name = state.profile?.full_name || state.user.email;
   const admin = isAdmin();
+  const name =
+    state.profile?.full_name ||
+    (admin ? "Aceros Oeste" : state.user.email);
+  const email = accountDisplayEmail();
   const navigation = admin
     ? `<button class="customer-side-link active" id="customerProfileBtn" type="button"><i>●</i><span>Mis datos</span></button><a class="customer-side-link" href="#panel-general"><i>▦</i><span>Panel general</span></a>`
     : `<button class="customer-side-link" id="customerProfileBtn" type="button"><i>●</i><span>Mis datos</span></button><button class="customer-side-link active" id="accountOrdersTab" type="button"><i>▤</i><span>Mis compras</span></button><button class="customer-side-link" id="accountChatTab" type="button"><i>▣</i><span>Chat general</span></button>`;
-  return `<div class="customer-shell"><aside class="customer-sidebar"><div class="customer-sidebar-user">${avatarMarkup(state.profile, "user-avatar customer-sidebar-avatar")}<div><b>${escapeHtml(name)}</b><small>${admin ? "Administración" : "Mi cuenta"}</small></div></div><nav aria-label="Panel de ${admin ? "administrador" : "cliente"}">${navigation}</nav><div class="customer-sidebar-bottom"><button class="customer-side-link" id="accountBackStore" type="button"><i>←</i><span>Volver a la tienda</span></button><button class="customer-side-link" id="logout" type="button"><i>↪</i><span>Cerrar sesión</span></button></div></aside><main class="customer-main"><header class="customer-topbar"><div><small>${escapeHtml(state.user.email || "")}</small><b>${escapeHtml(name)}</b></div>${avatarMarkup(state.profile, "user-avatar customer-top-avatar")}</header><div id="accountWorkspace" class="customer-workspace">${admin ? "" : '<div id="ordersList"><div class="empty">Cargando compras…</div></div>'}</div></main></div>`;
+  return `<div class="customer-shell"><aside class="customer-sidebar"><div class="customer-sidebar-user">${avatarMarkup(state.profile, "user-avatar customer-sidebar-avatar")}<div><b>${escapeHtml(name)}</b><small>${admin ? "Administración" : "Mi cuenta"}</small></div></div><nav aria-label="Panel de ${admin ? "administrador" : "cliente"}">${navigation}</nav><div class="customer-sidebar-bottom"><button class="customer-side-link" id="accountBackStore" type="button"><i>←</i><span>Volver a la tienda</span></button><button class="customer-side-link" id="logout" type="button"><i>↪</i><span>Cerrar sesión</span></button></div></aside><main class="customer-main"><header class="customer-topbar"><div><small>${escapeHtml(email)}</small><b>${escapeHtml(name)}</b></div>${avatarMarkup(state.profile, "user-avatar customer-top-avatar")}</header><div id="accountWorkspace" class="customer-workspace">${admin ? "" : '<div id="ordersList"><div class="empty">Cargando compras…</div></div>'}</div></main></div>`;
 }
 function setAccountTab(tab) {
   state.accountView = tab;
@@ -1607,7 +1631,8 @@ function openCustomerProfile() {
   const workspace = document.querySelector("#accountWorkspace");
   if (!workspace) return;
   const role = isAdmin() ? "Administrador" : "Cliente";
-  workspace.innerHTML = `<div class="customer-page-head"><div><p class="eyebrow orange">MI PERFIL</p><h1>Mis datos</h1><p>Actualizá el nombre y teléfono visibles en tu cuenta.</p></div></div><section class="customer-profile-panel"><div class="customer-profile-identity">${avatarMarkup(state.profile, "user-avatar account-avatar")}<div><h2>${escapeHtml(state.profile?.full_name || role)}</h2><span class="session-badge">${role}</span><small class="profile-email">${escapeHtml(state.user.email || "")}</small></div><button class="btn outline" id="editAvatar" type="button">Cambiar icono</button></div><form id="profileForm" class="profile-edit-form"><div class="field"><label>Nombre</label><input name="full_name" maxlength="100" autocomplete="name" value="${escapeHtml(state.profile?.full_name || "")}" required></div><div class="field"><label>Email</label><input value="${escapeHtml(state.user.email || "")}" readonly aria-readonly="true"></div><div class="field"><label>Teléfono</label><input name="phone" maxlength="40" autocomplete="tel" value="${escapeHtml(state.profile?.phone || "")}"></div><button class="btn cta" type="submit">Guardar cambios</button></form></section>`;
+  const email = accountDisplayEmail();
+  workspace.innerHTML = `<div class="customer-page-head"><div><p class="eyebrow orange">MI PERFIL</p><h1>Mis datos</h1><p>Actualizá el nombre y teléfono visibles en tu cuenta.</p></div></div><section class="customer-profile-panel"><div class="customer-profile-identity">${avatarMarkup(state.profile, "user-avatar account-avatar")}<div><h2>${escapeHtml(state.profile?.full_name || role)}</h2><span class="session-badge">${role}</span><small class="profile-email">${escapeHtml(email)}</small></div><button class="btn outline" id="editAvatar" type="button">Cambiar icono</button></div><form id="profileForm" class="profile-edit-form"><div class="field"><label>Nombre</label><input name="full_name" maxlength="100" autocomplete="name" value="${escapeHtml(state.profile?.full_name || "")}" required></div><div class="field"><label>Email de contacto</label><input value="${escapeHtml(email)}" readonly aria-readonly="true"></div><div class="field"><label>Teléfono</label><input name="phone" maxlength="40" autocomplete="tel" value="${escapeHtml(state.profile?.phone || "")}"></div><button class="btn cta" type="submit">Guardar cambios</button></form></section>`;
   document.querySelector("#editAvatar")?.addEventListener("click", openAvatarPicker);
   document.querySelector("#profileForm")?.addEventListener("submit", saveProfile);
 }
@@ -2100,7 +2125,10 @@ async function openAdminUsers() {
 }
 function adminUserMarkup(profile) {
   const name = profile.full_name?.trim() || "Sin nombre";
-  const email = profile.email?.trim() || "Sin email";
+  const email =
+    profile.role === "admin"
+      ? normalizedContactEmail(profile.email)
+      : profile.email?.trim() || "Sin email";
   const phone = profile.phone?.trim() || "Sin teléfono";
   const search = escapeHtml(`${name} ${email} ${phone}`.toLowerCase());
   const phoneDigits = phone.replace(/\D/g, "");
@@ -2259,7 +2287,7 @@ function openSettings() {
   setAdminActive("settings");
   state.activeConversationId = null;
   const ws = document.querySelector("#adminWorkspace");
-  ws.innerHTML = `<h3>Configuración de la tienda</h3><form id="settingsForm" class="form-grid"><div class="field"><label>Porcentaje de seña</label><input name="deposit_percentage" type="number" min="1" max="100" value="${state.settings.deposit_percentage || 50}"></div><div class="field"><label>WhatsApp de ventas</label><input name="sales_whatsapp" value="${escapeHtml(state.settings.sales_whatsapp || "")}"></div><div class="field full"><label>Email de contacto</label><input name="contact_email" type="email" value="${escapeHtml(state.settings.contact_email || "")}"></div><button class="btn secondary">Guardar</button></form>`;
+  ws.innerHTML = `<h3>Configuración de la tienda</h3><form id="settingsForm" class="form-grid"><div class="field"><label>Porcentaje de seña</label><input name="deposit_percentage" type="number" min="1" max="100" value="${state.settings.deposit_percentage || 50}"></div><div class="field"><label>WhatsApp de ventas</label><input name="sales_whatsapp" value="${escapeHtml(state.settings.sales_whatsapp || "")}"></div><div class="field full"><label>Email de contacto</label><input name="contact_email" type="email" value="${escapeHtml(normalizedContactEmail(state.settings.contact_email))}"></div><button class="btn secondary">Guardar</button></form>`;
   document.querySelector("#settingsForm").onsubmit = async (e) => {
     e.preventDefault();
     const button = e.submitter,
