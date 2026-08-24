@@ -32,6 +32,10 @@ const finalOrderStatesMigration = readFileSync(
   new URL("supabase/migrations/011_remove_pending_orders.sql", root),
   "utf8",
 );
+const avatarMigration = readFileSync(
+  new URL("supabase/migrations/012_profile_avatars.sql", root),
+  "utf8",
+);
 const rows = {
   categories: [
     {
@@ -115,16 +119,32 @@ const rows = {
 };
 function query(table) {
   let single = false;
+  const equals = [];
   const api = new Proxy(
     {},
     {
       get(_target, key) {
         if (key === "then")
-          return (resolve) =>
+          return (resolve) => {
+            const source = rows[table];
+            const matches = Array.isArray(source)
+              ? source.filter((row) =>
+                  equals.every(([column, value]) => row?.[column] === value),
+                )
+              : source &&
+                  equals.every(([column, value]) => source?.[column] === value)
+                ? [source]
+                : [];
             resolve({
-              data: single ? rows[table] || null : rows[table] || [],
+              data: single ? matches[0] || null : matches,
               error: null,
             });
+          };
+        if (key === "eq")
+          return (column, value) => {
+            equals.push([column, value]);
+            return api;
+          };
         if (key === "maybeSingle" || key === "single")
           return () => {
             single = true;
@@ -226,7 +246,7 @@ const executable = html
   .replace('<script src="assets/vendor/supabase.js?v=1"></script>', "")
   .replace('<script src="config.js"></script>', "")
   .replace(
-    '<script src="app.js?v=18"></script>',
+    '<script src="app.js?v=19"></script>',
     `<script>${app.replaceAll("</script>", "<\\/script>")}</script>`,
   );
 const errors = [];
@@ -345,6 +365,11 @@ assert(
 assert(Boolean(d.querySelector("#productsBtn")), "Falta la pestaña Productos");
 assert(Boolean(d.querySelector("#usersBtn")), "Falta la pestaña Usuarios");
 assert(Boolean(d.querySelector("#chatsBtn")), "Falta la pestaña Chats");
+assert(
+  Boolean(d.querySelector(".admin-shell .admin-sidebar")) &&
+    d.querySelectorAll(".admin-side-nav [data-admin-route]").length === 8,
+  "El panel no usa el menú lateral completo",
+);
 rows.profiles = [
   {
     id: "admin-1",
@@ -388,6 +413,20 @@ assert(
   Boolean(d.querySelector('#adminWorkspace a[href="#producto/mesa-inox"]')),
   "Productos no se pueden abrir directamente desde el panel",
 );
+assert(
+  d.querySelectorAll(".admin-product-menu a, .admin-product-menu button")
+    .length === 3 &&
+    Boolean(d.querySelector('[data-similar="11111111-1111-4111-8111-111111111111"]')),
+  "El menú de cada producto no contiene sólo Ver, Modificar y Publicar similar",
+);
+d.querySelector("[data-similar]")?.click();
+await new Promise((resolve) => setTimeout(resolve, 30));
+assert(
+  d.querySelector('#productForm [name="name"]')?.value.includes("Similar") &&
+    d.querySelectorAll("[data-wizard-step]").length === 4,
+  "Publicar similar no abre una copia editable en el asistente",
+);
+d.querySelector("#cancelProductEditor")?.click();
 dom.window.location.hash = "#producto/mesa-inox";
 await new Promise((resolve) => setTimeout(resolve, 40));
 assert(
@@ -420,12 +459,14 @@ assert(
   "Las preguntas nuevas no aparecen en tiempo real",
 );
 d.querySelector("[data-edit]")?.click();
+await new Promise((resolve) => setTimeout(resolve, 40));
 assert(
   d.querySelector("#productPhotos")?.multiple &&
-    d.querySelector("#productVideos")?.multiple,
+    d.querySelector("#productVideos")?.multiple &&
+    d.querySelectorAll("[data-wizard-step]").length === 4,
   "El editor no permite seleccionar varias fotos y videos",
 );
-d.querySelector("[data-close]")?.click();
+d.querySelector("#cancelProductEditor")?.click();
 dom.window.location.hash = "#cliente/client-1";
 await new Promise((resolve) => setTimeout(resolve, 30));
 assert(
@@ -436,6 +477,12 @@ assert(
   d.querySelectorAll("#clientDetailContent [data-client-detail-photo]").length === 2,
   "La ficha individual no muestra los trabajos",
 );
+d.querySelector("#clientDetailContent [data-client-detail-photo]")?.click();
+assert(
+  Boolean(d.querySelector("#modal .client-photo-large")),
+  "Las fotos reducidas del cliente no se abren en tamaño grande",
+);
+d.querySelector("#modal [data-close]")?.click();
 assert(
   d.querySelector(".client-profile-card")?.textContent.includes(
     "Gastronomía",
@@ -492,6 +539,18 @@ await new Promise((resolve) => setTimeout(resolve, 40));
 dom.window.location.hash = "#cuenta";
 await new Promise((resolve) => setTimeout(resolve, 30));
 assert(Boolean(d.querySelector("#accountChatTab")), "Falta el chat del cliente");
+assert(
+  Boolean(d.querySelector("#editAvatar")) &&
+    Boolean(d.querySelector(".account-avatar")),
+  "La cuenta no muestra el avatar configurable",
+);
+d.querySelector("#editAvatar")?.click();
+assert(
+  d.querySelectorAll(".avatar-preset-option").length === 6 &&
+    d.querySelector("#avatarPhoto")?.accept.includes("image/"),
+  "No se pueden elegir iconos predeterminados o una foto propia",
+);
+d.querySelector("#modal [data-close]")?.click();
 assert(
   !d.querySelector("[data-cancel-order]") &&
     !d.querySelector("#ordersList")?.textContent.includes("Pendiente"),
@@ -616,6 +675,14 @@ assert(
     adminDeleteFunction.includes("No podés eliminar tu propia cuenta"),
   "La eliminación de usuarios no quedó protegida para administradores",
 );
+assert(
+  avatarMigration.includes("add column if not exists avatar_url") &&
+    avatarMigration.includes("profile-avatars") &&
+    avatarMigration.includes("auth.uid()::text") &&
+    app.includes("rememberPendingCheckout(data.orderId, checkoutLines)") &&
+    app.includes('hash.split("?")[0]'),
+  "Los avatares o la limpieza segura del carrito no están completos",
+);
 await authListener?.("SIGNED_OUT", null);
 await new Promise((resolve) => setTimeout(resolve, 30));
 activeSession = {
@@ -635,6 +702,25 @@ assert(
   "El checkout no recupera una sesión persistida en incógnito",
 );
 d.querySelector("#modal [data-close]")?.click();
+d.querySelector("[data-open-cart]")?.click();
+d.querySelectorAll("[data-remove]").forEach((button) => button.click());
+d.querySelector("[data-close-cart]")?.click();
+d.querySelector("[data-add]")?.click();
+dom.window.localStorage.setItem(
+  "ao_pending_checkout",
+  JSON.stringify({
+    orderId: "order-1",
+    userId: "customer-1",
+    items: [{ id: "11111111-1111-4111-8111-111111111111", qty: 1 }],
+  }),
+);
+dom.window.location.hash = "#checkout/exito?collection_status=approved";
+await new Promise((resolve) => setTimeout(resolve, 120));
+assert(
+  d.querySelector(".cart-count")?.textContent === "0" &&
+    !dom.window.localStorage.getItem("ao_pending_checkout"),
+  "El carrito no se limpia después de confirmar el pago con parámetros de Mercado Pago",
+);
 await authListener?.("PASSWORD_RECOVERY", {
   user: { id: "customer-1", email: "cliente@example.test", user_metadata: {} },
 });
@@ -649,5 +735,5 @@ if (errors.length) {
   process.exit(1);
 }
 console.log(
-  "QA OK: clientes profesionales, pedidos sin Pendiente y eliminación segura de usuarios",
+  "QA OK: carrito pospago, avatares, galería y nuevo panel administrativo",
 );

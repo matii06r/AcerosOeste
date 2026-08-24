@@ -16,7 +16,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css?v=13" />
+  <link rel="stylesheet" href="styles.css?v=14" />
   <script type="application/ld+json">{"@context":"https://schema.org","@type":"Store","name":"Aceros Oeste","url":"https://acerosoeste.com/","image":"https://acerosoeste.com/assets/logo-aceros-oeste.png","email":"gestionacerosoeste@gmail.com","telephone":["+54 9 11 3432-2199","+54 9 11 6178-1074"],"address":{"@type":"PostalAddress","streetAddress":"Av. San Martín 4092","addressLocality":"Ciudad Autónoma de Buenos Aires","addressCountry":"AR"},"openingHours":"Mo-Fr 09:00-17:00","sameAs":["https://www.instagram.com/aceros_oeste/","https://www.facebook.com/aceros.oeste.2025"]}</script>
 </head>
 <body>
@@ -28,7 +28,7 @@
       <div class="nav-links">
         <a href="#inicio">Inicio</a><a href="#productos">Productos</a><a href="#clientes">Clientes</a><a href="#nosotros">Nosotros</a><a href="#politicas">Políticas</a><a href="#ubicacion">Ubicación</a><a id="adminNavLink" class="hidden" href="#panel-general">Panel general</a>
       </div>
-      <a id="accountNav" class="account-nav" href="#cuenta" aria-label="Abrir mi cuenta"><span class="person-icon" aria-hidden="true">●</span><span id="accountNavName">Ingresar</span></a>
+      <a id="accountNav" class="account-nav" href="#cuenta" aria-label="Abrir mi cuenta"><span id="accountNavAvatar" class="user-avatar nav-avatar avatar-person" aria-hidden="true"><b>●</b></span><span id="accountNavName">Ingresar</span></a>
       <button class="cart-btn" data-open-cart aria-label="Abrir carrito">Carrito <span class="cart-count">0</span></button>
     </nav>
   </header>
@@ -82,7 +82,7 @@
 
     <section id="cuenta" class="section account-section standalone-page hidden"><div class="container account-page-container"><div class="account-page-heading"><p class="eyebrow orange">ACEROSOESTE</p><h1 id="accountTitle">Mi cuenta</h1></div><div id="accountContent" class="account-card"></div></div></section>
 
-    <section id="panel-general" class="section admin-page standalone-page hidden"><div class="container"><a class="back-link" href="#inicio">← Volver a la tienda</a><div class="section-head"><div><p class="eyebrow orange">ADMINISTRACIÓN</p><h2>Panel general</h2><p>Productos, stock, pedidos y configuración de la tienda.</p></div></div><div id="adminPanelContent" class="account-card"></div></div></section>
+    <section id="panel-general" class="admin-page standalone-page hidden"><div class="admin-page-container"><div id="adminPanelContent"></div></div></section>
 
     <section id="cambiar-contrasena" class="section account-section standalone-page hidden"><div class="container auth-shell"><div class="auth-intro"><p class="eyebrow orange">SEGURIDAD</p><h1>Protegé<br><em>tu cuenta.</em></h1><p>Elegí una contraseña nueva y confirmala antes de guardar el cambio.</p></div><div><p class="eyebrow orange">RECUPERACIÓN</p><h2>Nueva contraseña</h2><div id="passwordUpdateContent" class="account-card"></div></div></div></section>
   </main>
@@ -96,6 +96,6 @@
   <noscript><div class="notice">Para usar la tienda necesitás activar JavaScript en el navegador.</div></noscript>
   <script src="assets/vendor/supabase.js?v=1"></script>
   <script src="config.js"></script>
-  <script src="app.js?v=18"></script>
+  <script src="app.js?v=19"></script>
 </body>
 </html>

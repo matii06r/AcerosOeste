@@ -55,7 +55,7 @@ npx supabase functions deploy admin-delete-user --project-ref dvisdjvzwbfklrpzsu
 ```
 
 `db push` aplicará solamente las migraciones pendientes, incluidas `007`, `008`,
-`009`, `010` y `011_remove_pending_orders.sql`. La migración `008` completa el email de
+`009`, `010`, `011_remove_pending_orders.sql` y `012_profile_avatars.sql`. La migración `008` completa el email de
 las cuentas existentes, guarda el de los nuevos registros y habilita la lista
 de usuarios del panel sin exponer esos datos a visitantes ni a otros clientes.
 La migración `009` activa la sincronización en vivo de pedidos, preguntas, chat,
@@ -65,6 +65,8 @@ aparece para el cliente y el administrador cuando el webhook acredita el pago
 total o la seña configurada.
 La migración `011` convierte cualquier pedido viejo que todavía figure como
 **Pendiente** en un intento oculto y elimina Pendiente de los estados permitidos.
+La migración `012` agrega los iconos predeterminados y el bucket seguro donde
+cada usuario puede subir únicamente su propia foto de perfil.
 
 Después de aplicar `010`, desplegá la función que inicia el checkout:
 
@@ -218,6 +220,11 @@ privadas de clientes autenticados.
    en el momento. Repetir publicando una pregunta en un producto.
 9. Abrir Panel general > Usuarios, comprobar los datos y eliminar una cuenta de
    prueba. La cuenta administradora no debe mostrar el botón de eliminación.
+10. Desde Mi cuenta, elegir un icono predeterminado y luego subir una foto propia.
+11. Completar un pago y volver a la tienda: después de la confirmación del
+    webhook, los artículos pagados deben desaparecer automáticamente del carrito.
+12. Probar Crear producto, Modificar y Publicar similar desde el nuevo menú
+    lateral del panel administrativo.
 
 Si un producto se elimina, se desactiva o se queda sin stock mientras permanece
 guardado en un carrito, la web lo quita al recargar y corrige también el contador.

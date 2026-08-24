@@ -22,6 +22,14 @@ const categoryVisuals = {
   Carros: "▤",
   Estanterías: "▥",
 };
+const avatarPresets = [
+  { id: "person", icon: "●", label: "Clásico" },
+  { id: "chef", icon: "♨", label: "Cocina" },
+  { id: "builder", icon: "◆", label: "Fabricación" },
+  { id: "tools", icon: "✦", label: "Herramientas" },
+  { id: "steel", icon: "A", label: "Aceros Oeste" },
+  { id: "star", icon: "★", label: "Destacado" },
+];
 const fallbackProducts = [
   {
     id: "demo-1",
@@ -107,12 +115,15 @@ const state = {
   liveChannel: null,
   accountView: "orders",
   adminView: "products",
+  productEditorId: null,
+  verifyingCheckout: false,
   activeConversationId: null,
   activeConversationName: "",
 };
 const realtimeTimers = new Map();
 const isAdmin = () => state.profile?.role === "admin";
 const cartStorageKey = () => `ao_cart_${state.user?.id || "guest"}`;
+const pendingCheckoutKey = "ao_pending_checkout";
 const slugify = (text) =>
   String(text)
     .toLowerCase()
@@ -133,6 +144,76 @@ const saveCart = () => {
   localStorage.setItem(cartStorageKey(), JSON.stringify(state.cart));
   renderCartCount();
 };
+function avatarMarkup(profile = {}, className = "user-avatar") {
+  const url = String(profile?.avatar_url || "").trim();
+  const preset =
+    avatarPresets.find((item) => item.id === profile?.avatar_preset) ||
+    avatarPresets[0];
+  return `<span class="${escapeHtml(className)} avatar-${escapeHtml(preset.id)}" aria-hidden="true">${url ? `<img src="${escapeHtml(url)}" alt="">` : `<b>${escapeHtml(preset.icon)}</b>`}</span>`;
+}
+function rememberPendingCheckout(orderId, lines) {
+  localStorage.setItem(
+    pendingCheckoutKey,
+    JSON.stringify({
+      orderId,
+      userId: state.user?.id || null,
+      createdAt: new Date().toISOString(),
+      items: lines.map((line) => ({
+        id: line.product.id,
+        qty: Math.max(1, Number(line.qty) || 1),
+      })),
+    }),
+  );
+}
+function removePaidItemsFromCart(checkout) {
+  const purchased = new Map(
+    (checkout?.items || []).map((item) => [
+      String(item.id),
+      Math.max(1, Number(item.qty) || 1),
+    ]),
+  );
+  state.cart = state.cart
+    .map((item) => ({
+      ...item,
+      qty: item.qty - (purchased.get(String(item.id)) || 0),
+    }))
+    .filter((item) => item.qty > 0);
+  saveCart();
+  renderCart();
+}
+async function syncPaidCheckoutCart({ retry = false, notify = false } = {}) {
+  if (!supabase || state.verifyingCheckout) return false;
+  const checkout = safeRead(pendingCheckoutKey, null);
+  if (!checkout?.orderId) return false;
+  state.verifyingCheckout = true;
+  try {
+    const session = await getCheckoutSession();
+    if (!session?.user || checkout.userId !== session.user.id) return false;
+    const attempts = retry ? 8 : 1;
+    for (let attempt = 0; attempt < attempts; attempt++) {
+      const { data, error } = await supabase
+        .from("orders")
+        .select("id,status")
+        .eq("id", checkout.orderId)
+        .maybeSingle();
+      if (!error && ["deposit_paid", "paid", "in_transit", "fulfilled"].includes(data?.status)) {
+        removePaidItemsFromCart(checkout);
+        localStorage.removeItem(pendingCheckoutKey);
+        if (notify)
+          toast(
+            "Pago acreditado. Quitamos del carrito los productos de esta compra.",
+            "success",
+          );
+        return true;
+      }
+      if (attempt < attempts - 1)
+        await new Promise((resolve) => setTimeout(resolve, 900));
+    }
+    return false;
+  } finally {
+    state.verifyingCheckout = false;
+  }
+}
 function reconcileCart() {
   if (state.loading || state.usingFallback) return false;
   const availableProducts = new Map(
@@ -294,6 +375,7 @@ async function refreshStoreFromRealtime() {
   else if (state.adminView === "settings") openSettings();
 }
 function refreshOrdersFromRealtime() {
+  syncPaidCheckoutCart({ notify: true });
   const hash = decodeURIComponent(location.hash.slice(1));
   if (isAdmin() && hash === "panel-general" && state.adminView === "orders") {
     return openAdminOrders();
@@ -307,8 +389,20 @@ function refreshOrdersFromRealtime() {
     return loadOrders();
   }
 }
-function refreshProfilesFromRealtime() {
+async function refreshProfilesFromRealtime() {
   const hash = decodeURIComponent(location.hash.slice(1));
+  if (state.user) {
+    const { data } = await supabase
+      .from("profiles")
+      .select("*")
+      .eq("id", state.user.id)
+      .maybeSingle();
+    if (data) {
+      state.profile = data;
+      updateSessionNavigation();
+      if (hash.split("?")[0] === "cuenta") renderAccount();
+    }
+  }
   if (isAdmin() && hash === "panel-general" && state.adminView === "users") {
     return openAdminUsers();
   }
@@ -433,6 +527,7 @@ async function applySession(session) {
   }
   updateSessionNavigation();
   startAppRealtime();
+  if (state.user) syncPaidCheckoutCart({ notify: true });
   if (state.recoveryMode) {
     renderProducts();
     handleRoute();
@@ -447,6 +542,12 @@ async function applySession(session) {
 function updateSessionNavigation() {
   if (state.recoveryMode) {
     document.querySelector("#accountNavName").textContent = "Recuperación";
+    const avatar = document.querySelector("#accountNavAvatar");
+    if (avatar)
+      avatar.outerHTML = avatarMarkup({}, "user-avatar nav-avatar").replace(
+        "<span class=",
+        '<span id="accountNavAvatar" class=',
+      );
     document.querySelector("#adminNavLink").classList.add("hidden");
     return;
   }
@@ -456,6 +557,14 @@ function updateSessionNavigation() {
     state.user?.email?.split("@")[0] ||
     "Ingresar";
   document.querySelector("#accountNavName").textContent = name;
+  const avatar = document.querySelector("#accountNavAvatar");
+  if (avatar) {
+    const markup = avatarMarkup(
+      state.profile,
+      "user-avatar nav-avatar",
+    ).replace("<span class=", '<span id="accountNavAvatar" class=');
+    avatar.outerHTML = markup;
+  }
   document
     .querySelector("#adminNavLink")
     .classList.toggle("hidden", !isAdmin());
@@ -749,30 +858,31 @@ function showStandalonePage(selector) {
 }
 function handleRoute() {
   const hash = decodeURIComponent(location.hash.slice(1));
-  if (!["cuenta", "panel-general"].includes(hash)) stopChatRealtime();
+  const route = hash.split("?")[0];
+  if (!["cuenta", "panel-general"].includes(route)) stopChatRealtime();
   const recoveryRequested =
     new URLSearchParams(location.search).get("auth") === "recovery";
   const emailConfirmed =
     new URLSearchParams(location.search).get("auth") === "confirmed";
-  if (recoveryRequested || state.recoveryMode || hash === "cambiar-contrasena") {
+  if (recoveryRequested || state.recoveryMode || route === "cambiar-contrasena") {
     state.recoveryMode = true;
     showStandalonePage("#cambiar-contrasena");
     renderPasswordUpdate();
-  } else if (hash.startsWith("producto/"))
-    showProductPage(hash.slice("producto/".length));
-  else if (hash.startsWith("cliente/"))
-    showClientPage(hash.slice("cliente/".length));
-  else if (hash === "cuenta") {
+  } else if (route.startsWith("producto/"))
+    showProductPage(route.slice("producto/".length));
+  else if (route.startsWith("cliente/"))
+    showClientPage(route.slice("cliente/".length));
+  else if (route === "cuenta") {
     showStandalonePage("#cuenta");
     renderAccount();
-  } else if (hash === "panel-general") {
+  } else if (route === "panel-general") {
     if (!isAdmin()) {
       location.hash = "cuenta";
       return;
     }
     showStandalonePage("#panel-general");
     renderAdminPanel();
-  } else if (hash === "politicas") {
+  } else if (route === "politicas") {
     showStandalonePage("#politicas");
   } else if (emailConfirmed) {
     showStandalonePage("#cuenta");
@@ -781,21 +891,28 @@ function handleRoute() {
     toast("Email confirmado. Ya podés usar tu cuenta.", "success");
   } else {
     showMainSections();
-    renderCheckoutStatus(hash);
+    renderCheckoutStatus(route);
   }
 }
-function renderCheckoutStatus(hash) {
+async function renderCheckoutStatus(hash) {
   if (hash === "checkout/exito") {
-    toast(
-      "Pago aprobado. Podés consultar el pedido desde Mi cuenta.",
-      "success",
-    );
-    state.cart = [];
-    saveCart();
-  } else if (hash === "checkout/error")
+    toast("Confirmando el pago y actualizando tu carrito…", "info");
+    const cleared = await syncPaidCheckoutCart({ retry: true, notify: true });
+    if (!cleared)
+      toast(
+        "El pago está siendo confirmado. El carrito se actualizará automáticamente al acreditarse.",
+        "info",
+      );
+  } else if (hash === "checkout/error") {
+    localStorage.removeItem(pendingCheckoutKey);
     toast("El pago no pudo completarse. Tu carrito sigue guardado.", "error");
-  else if (hash === "checkout/pendiente")
-    toast("El pago quedó pendiente de confirmación.", "info");
+  } else if (hash === "checkout/pendiente") {
+    toast(
+      "El pago quedó pendiente. El carrito se limpiará cuando Mercado Pago lo acredite.",
+      "info",
+    );
+    syncPaidCheckoutCart({ notify: true });
+  }
 }
 
 function addToCart(id) {
@@ -922,6 +1039,9 @@ async function getCheckoutSession() {
     if (wasGuest && state.cart.length) {
       localStorage.setItem(cartStorageKey(), JSON.stringify(state.cart));
       localStorage.removeItem("ao_cart_guest");
+    } else if (wasGuest) {
+      state.cart = safeRead(cartStorageKey(), []);
+      renderCartCount();
     }
     updateSessionNavigation();
   }
@@ -1012,6 +1132,7 @@ async function startPayment(event) {
       "error",
     );
   }
+  rememberPendingCheckout(data.orderId, checkoutLines);
   window.location.assign(data.initPoint);
 }
 function openFreight(total) {
@@ -1051,6 +1172,7 @@ function renderAccount() {
   state.accountView = "orders";
   el.innerHTML = customerDashboard();
   document.querySelector("#logout")?.addEventListener("click", logout);
+  document.querySelector("#editAvatar")?.addEventListener("click", openAvatarPicker);
   if (!isAdmin()) {
     document.querySelector("#accountOrdersTab")?.addEventListener("click", () => {
       setAccountTab("orders");
@@ -1063,6 +1185,66 @@ function renderAccount() {
       openCustomerChat();
     });
     loadOrders();
+  }
+}
+function openAvatarPicker() {
+  if (!state.user) return;
+  const currentPreset = state.profile?.avatar_preset || "person";
+  openModal(
+    `<button class="modal-close" data-close>×</button><p class="eyebrow orange">TU PERFIL</p><h2>Elegí tu icono</h2><p class="avatar-picker-copy">Podés usar uno de los iconos de Aceros Oeste o subir una foto desde tu dispositivo.</p><form id="avatarForm"><div class="avatar-preset-grid">${avatarPresets.map((preset) => `<label class="avatar-preset-option"><input type="radio" name="avatar_preset" value="${escapeHtml(preset.id)}" ${currentPreset === preset.id && !state.profile?.avatar_url ? "checked" : ""}><span class="user-avatar avatar-${escapeHtml(preset.id)}"><b>${escapeHtml(preset.icon)}</b></span><small>${escapeHtml(preset.label)}</small></label>`).join("")}</div><label class="avatar-upload"><span>Subir una foto propia</span><small>JPG, PNG o WebP · máximo 5 MB</small><input id="avatarPhoto" type="file" accept="image/png,image/jpeg,image/webp"></label><div id="avatarPhotoPreview" class="avatar-photo-preview">${state.profile?.avatar_url ? `<img src="${escapeHtml(state.profile.avatar_url)}" alt="Foto actual"><span>Foto actual</span>` : ""}</div><div class="avatar-form-actions"><button class="btn outline" type="button" data-close>Cancelar</button><button class="btn cta" type="submit">Guardar icono</button></div></form>`,
+  );
+  const input = document.querySelector("#avatarPhoto");
+  input.onchange = () => {
+    const file = input.files?.[0];
+    if (!file) return;
+    if (file.size > 5_000_000) {
+      input.value = "";
+      return toast("La imagen supera los 5 MB.", "error");
+    }
+    document.querySelector("#avatarPhotoPreview").innerHTML =
+      `<img src="${URL.createObjectURL(file)}" alt="Vista previa"><span>${escapeHtml(file.name)}</span>`;
+  };
+  document.querySelector("#avatarForm").onsubmit = saveAvatar;
+}
+async function saveAvatar(event) {
+  event.preventDefault();
+  const button = event.submitter;
+  const file = document.querySelector("#avatarPhoto")?.files?.[0];
+  const preset =
+    new FormData(event.currentTarget).get("avatar_preset") ||
+    state.profile?.avatar_preset ||
+    "person";
+  setBusy(button, true, "Guardando…");
+  try {
+    let avatarUrl = null;
+    if (file) {
+      const extension = (file.name.split(".").pop() || "jpg").toLowerCase();
+      const path = `${state.user.id}/${crypto.randomUUID()}.${extension}`;
+      const { error: uploadError } = await supabase.storage
+        .from("profile-avatars")
+        .upload(path, file, { cacheControl: "3600", upsert: false });
+      if (uploadError) throw uploadError;
+      avatarUrl = supabase.storage.from("profile-avatars").getPublicUrl(path)
+        .data.publicUrl;
+    } else if (!event.currentTarget.querySelector('[name="avatar_preset"]:checked')) {
+      avatarUrl = state.profile?.avatar_url || null;
+    }
+    const { data, error } = await supabase
+      .from("profiles")
+      .update({ avatar_url: avatarUrl, avatar_preset: String(preset) })
+      .eq("id", state.user.id)
+      .select()
+      .single();
+    if (error) throw error;
+    state.profile = { ...state.profile, ...data };
+    closeModal();
+    updateSessionNavigation();
+    renderAccount();
+    toast("Icono actualizado", "success");
+  } catch (error) {
+    toast(error.message || "No se pudo actualizar el icono", "error");
+  } finally {
+    setBusy(button, false);
   }
 }
 function renderRegister() {
@@ -1205,7 +1387,7 @@ async function logout() {
   toast("Sesión cerrada");
 }
 function customerDashboard() {
-  return `<span class="session-badge">${isAdmin() ? "Administrador" : "Cliente"}</span><h3>Hola, ${escapeHtml(state.profile?.full_name || state.user.email)}</h3><p>${escapeHtml(state.user.email)}</p>${isAdmin() ? '<a class="btn cta" href="#panel-general">Abrir panel general</a>' : '<div class="account-tabs"><button class="btn secondary active" id="accountOrdersTab" type="button">Mis pedidos</button><button class="btn secondary" id="accountChatTab" type="button">Chat privado</button></div><div id="accountWorkspace"><div id="ordersList"><div class="empty">Cargando pedidos…</div></div></div>'}<button class="btn outline account-logout" id="logout">Cerrar sesión</button>`;
+  return `<div class="account-profile-head">${avatarMarkup(state.profile, "user-avatar account-avatar")}<div><span class="session-badge">${isAdmin() ? "Administrador" : "Cliente"}</span><h3>Hola, ${escapeHtml(state.profile?.full_name || state.user.email)}</h3><p>${escapeHtml(state.user.email)}</p></div><button class="btn outline" id="editAvatar" type="button">Cambiar icono</button></div>${isAdmin() ? '<a class="btn cta" href="#panel-general">Abrir panel general</a>' : '<div class="account-tabs"><button class="btn secondary active" id="accountOrdersTab" type="button">Mis pedidos</button><button class="btn secondary" id="accountChatTab" type="button">Chat privado</button></div><div id="accountWorkspace"><div id="ordersList"><div class="empty">Cargando pedidos…</div></div></div>'}<button class="btn outline account-logout" id="logout">Cerrar sesión</button>`;
 }
 function setAccountTab(tab) {
   state.accountView = tab;
@@ -1436,28 +1618,79 @@ function renderAdminPanel() {
       '<div class="notice">Acceso exclusivo para administración.</div>';
     return;
   }
-  state.adminView = "products";
   state.activeConversationId = null;
   container.innerHTML = adminDashboard();
   bindAdminDashboard();
+  openAdminSection(state.adminView || "products");
 }
 function adminDashboard() {
-  return `<div class="admin-metrics"><div class="metric"><b>${state.products.length}</b><small>Productos publicados</small></div><div class="metric"><b>${state.settings.deposit_percentage || 50}%</b><small>Seña configurada</small></div></div><div class="admin-tabs"><button class="btn cta" id="addProduct">+ Crear producto</button><button class="btn secondary" id="productsBtn">Productos</button><button class="btn secondary" id="usersBtn">Usuarios</button><button class="btn secondary" id="categoriesBtn">Categorías</button><button class="btn secondary" id="clientsBtn">Clientes y trabajos</button><button class="btn secondary" id="chatsBtn">Chats</button><button class="btn secondary" id="settingsBtn">Configuración</button><button class="btn secondary" id="ordersBtn">Pedidos</button><button class="btn outline" id="logout">Cerrar sesión</button></div><div id="adminWorkspace">${adminProductsMarkup()}</div>`;
+  return `<div class="admin-shell"><aside id="adminSidebar" class="admin-sidebar"><a class="admin-brand" href="#inicio"><img src="assets/logo-aceros-oeste.png" alt="Aceros Oeste"><span><b>ACEROS OESTE</b><small>Administración</small></span></a><nav class="admin-side-nav" aria-label="Panel de administración"><button class="admin-side-link primary" id="addProduct" data-admin-route="create-product" type="button"><i>＋</i><span>Crear producto</span></button><button class="admin-side-link" id="productsBtn" data-admin-route="products" type="button"><i>▤</i><span>Productos</span></button><button class="admin-side-link" id="usersBtn" data-admin-route="users" type="button"><i>●</i><span>Usuarios</span></button><button class="admin-side-link" id="categoriesBtn" data-admin-route="categories" type="button"><i>◇</i><span>Categorías</span></button><button class="admin-side-link" id="clientsBtn" data-admin-route="clients" type="button"><i>▧</i><span>Clientes y trabajos</span></button><button class="admin-side-link" id="chatsBtn" data-admin-route="chats" type="button"><i>▣</i><span>Chats</span></button><button class="admin-side-link" id="settingsBtn" data-admin-route="settings" type="button"><i>⚙</i><span>Configuración</span></button><button class="admin-side-link" id="ordersBtn" data-admin-route="orders" type="button"><i>▱</i><span>Pedidos</span></button></nav><div class="admin-sidebar-bottom"><a class="admin-side-link" href="#inicio"><i>←</i><span>Volver a la tienda</span></a><button class="admin-side-link" id="logout" type="button"><i>↪</i><span>Cerrar sesión</span></button></div></aside><main class="admin-main"><header class="admin-topbar"><button id="adminSidebarToggle" class="admin-sidebar-toggle" type="button" aria-label="Abrir menú">☰</button><div><small>PANEL GENERAL</small><b>${escapeHtml(state.profile?.full_name || "Administrador")}</b></div>${avatarMarkup(state.profile, "user-avatar admin-top-avatar")}</header><div id="adminWorkspace" class="admin-workspace"></div></main></div>`;
 }
 function adminProductsMarkup() {
-  return `<div class="admin-section-title"><div><h3>Productos publicados</h3><p>Editá o abrí cualquier ficha sin salir del panel.</p></div></div>${state.products.length ? state.products.map((product) => `<div class="admin-row"><b>${escapeHtml(product.name)}</b><span>${money(product.price)}</span><span>Stock: ${product.stock}</span><div class="admin-row-actions"><a class="remove" href="#producto/${encodeURIComponent(product.slug)}">Ver</a><button class="remove" data-edit="${product.id}">Editar</button></div></div>`).join("") : '<div class="notice">Todavía no hay productos publicados.</div>'}`;
+  return `<div class="admin-page-head"><div><p class="eyebrow orange">CATÁLOGO</p><h1>Productos</h1><p>Administrá precios, stock y publicaciones desde un solo lugar.</p></div><button class="btn cta" id="productsCreateButton" type="button">+ Crear producto</button></div><div class="admin-summary-strip"><span><b>${state.products.length}</b> publicaciones</span><span><b>${state.products.reduce((total, product) => total + Number(product.stock || 0), 0)}</b> unidades en stock</span></div><label class="admin-product-search"><span>⌕</span><input id="adminProductSearch" type="search" placeholder="Buscar por producto, SKU o categoría"></label>${state.products.length ? `<div class="admin-product-table"><div class="admin-product-table-head"><span>Publicación</span><span>Precio</span><span>Stock</span><span>Estado</span><span>Acciones</span></div><div id="adminProductList">${state.products.map((product) => adminProductRowMarkup(product)).join("")}</div></div>` : '<div class="notice">Todavía no hay productos publicados.</div>'}`;
+}
+function adminProductRowMarkup(product) {
+  const media = product.images?.[0];
+  const visual = media
+    ? isVideoUrl(media)
+      ? `<video src="${escapeHtml(media)}" muted playsinline></video>`
+      : `<img src="${escapeHtml(media)}" alt="${escapeHtml(product.name)}">`
+    : `<span>${escapeHtml(product.name.slice(0, 1).toUpperCase())}</span>`;
+  const search = escapeHtml(
+    `${product.name} ${product.sku} ${product.category}`.toLowerCase(),
+  );
+  return `<article class="admin-product-row" data-admin-product="${search}"><div class="admin-product-identity"><div class="admin-product-thumb">${visual}</div><div><b>${escapeHtml(product.name)}</b><small>SKU ${escapeHtml(product.sku || "Sin SKU")} · ${escapeHtml(product.category)}</small></div></div><strong>${money(product.price)}</strong><span class="admin-stock ${product.stock < 3 ? "low" : ""}">${Number(product.stock) || 0} u.</span><span class="admin-published"><i></i>${product.active === false ? "Pausado" : "Publicado"}</span><details class="admin-product-menu"><summary aria-label="Acciones de ${escapeHtml(product.name)}">⋮</summary><div><a href="#producto/${encodeURIComponent(product.slug)}">Ver producto</a><button type="button" data-edit="${product.id}">Modificar</button><button type="button" data-similar="${product.id}">Publicar similar</button></div></details></article>`;
 }
 function bindAdminProductRows() {
   document
     .querySelectorAll("#adminWorkspace [data-edit]")
     .forEach((node) => (node.onclick = () => openEditProduct(node.dataset.edit)));
+  document
+    .querySelectorAll("#adminWorkspace [data-similar]")
+    .forEach(
+      (node) =>
+        (node.onclick = () => openEditProduct(null, node.dataset.similar)),
+    );
+  document.querySelector("#productsCreateButton")?.addEventListener("click", () =>
+    openEditProduct(),
+  );
+  document.querySelector("#adminProductSearch")?.addEventListener("input", (event) => {
+    const term = String(event.target.value || "").trim().toLowerCase();
+    document.querySelectorAll("[data-admin-product]").forEach((row) =>
+      row.classList.toggle(
+        "hidden",
+        Boolean(term) && !row.dataset.adminProduct.includes(term),
+      ),
+    );
+  });
 }
 function openAdminProducts() {
   stopChatRealtime();
   state.adminView = "products";
+  state.productEditorId = null;
   state.activeConversationId = null;
+  setAdminActive("products");
   document.querySelector("#adminWorkspace").innerHTML = adminProductsMarkup();
   bindAdminProductRows();
+}
+function setAdminActive(view) {
+  const activeView = view === "product-editor" ? "products" : view;
+  document.querySelectorAll("[data-admin-route]").forEach((item) =>
+    item.classList.toggle("active", item.dataset.adminRoute === activeView),
+  );
+  document.querySelector("#adminSidebar")?.classList.remove("open");
+}
+function openAdminSection(view) {
+  if (view === "create-product") return openEditProduct();
+  if (view === "product-editor")
+    return openEditProduct(state.productEditorId);
+  if (view === "users") return openAdminUsers();
+  if (view === "categories") return openCategories();
+  if (view === "clients") return openClientManager();
+  if (view === "chats" || view === "conversation") return openAdminChats();
+  if (view === "settings") return openSettings();
+  if (view === "orders") return openAdminOrders();
+  return openAdminProducts();
 }
 function bindAdminDashboard() {
   if (!isAdmin()) return;
@@ -1484,17 +1717,20 @@ function bindAdminDashboard() {
     ?.addEventListener("click", openAdminOrders);
   document.querySelector("#chatsBtn")?.addEventListener("click", openAdminChats);
   document.querySelector("#logout")?.addEventListener("click", logout);
-  bindAdminProductRows();
+  document.querySelector("#adminSidebarToggle")?.addEventListener("click", () =>
+    document.querySelector("#adminSidebar")?.classList.toggle("open"),
+  );
 }
 async function openAdminUsers() {
   stopChatRealtime();
   state.adminView = "users";
+  setAdminActive("users");
   state.activeConversationId = null;
   const workspace = document.querySelector("#adminWorkspace");
   workspace.innerHTML = '<div class="empty">Cargando usuarios…</div>';
   const { data, error } = await supabase
     .from("profiles")
-    .select("id,full_name,email,phone,role,created_at")
+    .select("id,full_name,email,phone,role,avatar_url,avatar_preset,created_at")
     .order("created_at", { ascending: false })
     .limit(1000);
   if (error) {
@@ -1541,7 +1777,7 @@ function adminUserMarkup(profile) {
     : "Sin fecha";
   const canDelete =
     profile.role !== "admin" && String(profile.id) !== String(state.user?.id);
-  return `<article class="admin-user-card" data-admin-user="${search}"><div class="admin-user-primary"><span class="person-icon" aria-hidden="true">●</span><div><b>${escapeHtml(name)}</b><small>${profile.role === "admin" ? "Administrador" : "Cliente"} · Alta ${escapeHtml(createdAt)}</small></div></div><div class="admin-user-details"><span><small>Email</small>${email !== "Sin email" ? `<a href="mailto:${escapeHtml(email)}">${escapeHtml(email)}</a>` : `<b>${email}</b>`}</span><span><small>Teléfono</small><b>${escapeHtml(phone)}</b></span></div><div class="admin-user-actions">${email !== "Sin email" ? `<a class="btn outline" href="mailto:${escapeHtml(email)}">Enviar email</a>` : ""}${whatsapp ? `<a class="btn secondary" href="https://wa.me/${whatsapp}" target="_blank" rel="noopener">WhatsApp</a>` : ""}${canDelete ? `<button class="btn danger" type="button" data-delete-user="${escapeHtml(profile.id)}" data-user-name="${escapeHtml(name)}">Eliminar cuenta</button>` : ""}</div></article>`;
+  return `<article class="admin-user-card" data-admin-user="${search}"><div class="admin-user-primary">${avatarMarkup(profile, "user-avatar admin-list-avatar")}<div><b>${escapeHtml(name)}</b><small>${profile.role === "admin" ? "Administrador" : "Cliente"} · Alta ${escapeHtml(createdAt)}</small></div></div><div class="admin-user-details"><span><small>Email</small>${email !== "Sin email" ? `<a href="mailto:${escapeHtml(email)}">${escapeHtml(email)}</a>` : `<b>${email}</b>`}</span><span><small>Teléfono</small><b>${escapeHtml(phone)}</b></span></div><div class="admin-user-actions">${email !== "Sin email" ? `<a class="btn outline" href="mailto:${escapeHtml(email)}">Enviar email</a>` : ""}${whatsapp ? `<a class="btn secondary" href="https://wa.me/${whatsapp}" target="_blank" rel="noopener">WhatsApp</a>` : ""}${canDelete ? `<button class="btn danger" type="button" data-delete-user="${escapeHtml(profile.id)}" data-user-name="${escapeHtml(name)}">Eliminar cuenta</button>` : ""}</div></article>`;
 }
 async function deleteAdminUser(userId, userName, button) {
   if (
@@ -1575,6 +1811,7 @@ async function deleteAdminUser(userId, userName, button) {
 function openCategories() {
   stopChatRealtime();
   state.adminView = "categories";
+  setAdminActive("categories");
   state.activeConversationId = null;
   const workspace = document.querySelector("#adminWorkspace");
   workspace.innerHTML = `<h3>Categorías del catálogo</h3><form id="categoryForm" class="inline-admin-form"><input name="name" maxlength="70" placeholder="Nombre de la nueva categoría" required><button class="btn cta">Agregar categoría</button></form><div class="category-admin-list">${state.categories.map((category) => `<div class="admin-row"><b>${escapeHtml(category.name)}</b><span>Orden ${category.sort_order || 0}</span><span></span><button class="remove" data-delete-category="${category.id}">Eliminar</button></div>`).join("")}</div>`;
@@ -1615,6 +1852,7 @@ function openCategories() {
 function openClientManager() {
   stopChatRealtime();
   state.adminView = "clients";
+  setAdminActive("clients");
   state.activeConversationId = null;
   const ws = document.querySelector("#adminWorkspace");
   ws.innerHTML = `<div class="admin-section-title"><div><h3>Clientes y trabajos</h3><p>Publicá marcas y fotos de los trabajos realizados.</p></div><button class="btn cta" id="addClient">+ Agregar cliente</button></div><div class="client-admin-list">${state.clients.map((client) => `<div class="admin-row"><b>${escapeHtml(client.name)}</b><span>${escapeHtml(client.category || "Cliente")}</span><span>${client.images?.length || 0} fotos</span><div><button class="remove" data-edit-client="${client.id}">Editar</button> <button class="remove" data-delete-client="${client.id}">Eliminar</button></div></div>`).join("") || '<div class="notice">Todavía no agregaste clientes.</div>'}</div>`;
@@ -1662,6 +1900,7 @@ async function saveClient(event, current) {
 function openSettings() {
   stopChatRealtime();
   state.adminView = "settings";
+  setAdminActive("settings");
   state.activeConversationId = null;
   const ws = document.querySelector("#adminWorkspace");
   ws.innerHTML = `<h3>Configuración de la tienda</h3><form id="settingsForm" class="form-grid"><div class="field"><label>Porcentaje de seña</label><input name="deposit_percentage" type="number" min="1" max="100" value="${state.settings.deposit_percentage || 50}"></div><div class="field"><label>WhatsApp de ventas</label><input name="sales_whatsapp" value="${escapeHtml(state.settings.sales_whatsapp || "")}"></div><div class="field full"><label>Email de contacto</label><input name="contact_email" type="email" value="${escapeHtml(state.settings.contact_email || "")}"></div><button class="btn secondary">Guardar</button></form>`;
@@ -1687,6 +1926,7 @@ function openSettings() {
 async function openAdminChats() {
   stopChatRealtime();
   state.adminView = "chats";
+  setAdminActive("chats");
   state.activeConversationId = null;
   const workspace = document.querySelector("#adminWorkspace");
   workspace.innerHTML = '<div class="empty">Cargando conversaciones…</div>';
@@ -1725,6 +1965,7 @@ async function openAdminChats() {
 }
 async function openAdminConversation(conversationId, customerName) {
   state.adminView = "conversation";
+  setAdminActive("chats");
   state.activeConversationId = conversationId;
   state.activeConversationName = customerName || "Cliente";
   const workspace = document.querySelector("#adminWorkspace");
@@ -1751,6 +1992,7 @@ async function openAdminConversation(conversationId, customerName) {
 async function openAdminOrders() {
   stopChatRealtime();
   state.adminView = "orders";
+  setAdminActive("orders");
   state.activeConversationId = null;
   const ws = document.querySelector("#adminWorkspace");
   ws.innerHTML = '<div class="empty">Cargando pedidos…</div>';
@@ -1810,22 +2052,46 @@ async function openAdminOrders() {
   });
 }
 
-function openEditProduct(id) {
+function openEditProduct(id = null, similarId = null) {
   if (!isAdmin()) return;
-  const product = state.products.find((p) => String(p.id) === String(id)) || {
-    id: null,
-    name: "",
-    categoryId: state.categories[0]?.id,
-    price: "",
-    stock: "",
-    sku: "",
-    images: [],
-    desc: "",
-    details: "",
-  };
-  openModal(
-    `<button class="modal-close" data-close>×</button><p class="eyebrow orange">${id ? "EDITAR" : "NUEVO"} PRODUCTO</p><h2>${id ? "Actualizar publicación" : "Crear publicación"}</h2><form id="productForm" class="form-grid"><div class="field full"><label>Nombre</label><input name="name" value="${escapeHtml(product.name)}" required></div><div class="field"><label>Categoría</label><select name="category_id">${state.categories.map((c) => `<option value="${c.id}" ${product.categoryId === c.id ? "selected" : ""}>${escapeHtml(c.name)}</option>`).join("")}</select></div><div class="field"><label>SKU</label><input name="sku" value="${escapeHtml(product.sku)}" required></div><div class="field"><label>Precio</label><input name="price" type="number" min="0" step="0.01" value="${product.price}" required></div><div class="field"><label>Stock</label><input name="stock_quantity" type="number" min="0" value="${product.stock}" required></div><div class="field full"><label>Descripción principal</label><textarea name="description" rows="3" required>${escapeHtml(product.desc)}</textarea></div><div class="field full"><label>Detalles adicionales</label><textarea name="details" rows="3">${escapeHtml(product.details)}</textarea></div><div class="field"><label class="image-upload-label">Seleccionar fotos<input id="productPhotos" type="file" accept="image/png,image/jpeg,image/webp" multiple hidden></label><small>Elegí varias fotos a la vez, hasta 5 MB cada una.</small></div><div class="field"><label class="image-upload-label">Seleccionar videos<input id="productVideos" type="file" accept="video/mp4,video/webm" multiple hidden></label><small>MP4 o WebM, hasta 50 MB por video.</small></div><div class="field full"><p class="field-caption">Galería actual y archivos nuevos</p><div id="existingMedia" class="media-admin-grid">${(product.images || []).map((url, index) => `<label class="media-admin-item">${isVideoUrl(url) ? `<video src="${escapeHtml(url)}" muted></video>` : `<img src="${escapeHtml(url)}" alt="Medio ${index + 1}">`}<span><input type="checkbox" value="${escapeHtml(url)}" data-remove-media> Quitar</span></label>`).join("")}</div><div id="newMediaPreview" class="media-admin-grid"></div></div><button class="btn cta">${id ? "Guardar cambios" : "Publicar producto"}</button>${id ? '<button class="btn danger" id="deleteInForm" type="button">Eliminar producto</button>' : ""}</form>`,
+  const editing = state.products.find((p) => String(p.id) === String(id));
+  const source = state.products.find(
+    (p) => String(p.id) === String(similarId),
   );
+  const product = editing
+    ? { ...editing }
+    : source
+      ? {
+          ...source,
+          id: null,
+          slug: null,
+          isSimilar: true,
+          name: `${source.name} - Similar`,
+          sku: `${source.sku || "AO"}-SIM-${String(Date.now()).slice(-4)}`,
+        }
+      : {
+          id: null,
+          name: "",
+          categoryId: state.categories[0]?.id,
+          price: "",
+          stock: "",
+          sku: "",
+          images: [],
+          desc: "",
+          details: "",
+        };
+  state.productEditorId = editing?.id || null;
+  state.adminView = editing ? "product-editor" : "create-product";
+  if (location.hash.split("?")[0] !== "#panel-general") {
+    location.hash = "panel-general";
+    setTimeout(() => openEditProduct(id, similarId), 0);
+    return;
+  }
+  stopChatRealtime();
+  setAdminActive(editing ? "products" : "create-product");
+  const workspace = document.querySelector("#adminWorkspace");
+  if (!workspace) return;
+  workspace.innerHTML = `<div class="admin-page-head"><div><p class="eyebrow orange">${editing ? "MODIFICAR PUBLICACIÓN" : source ? "PUBLICAR SIMILAR" : "NUEVA PUBLICACIÓN"}</p><h1>${editing ? "Modificar producto" : "Crear producto"}</h1><p>${source ? `Partimos de ${escapeHtml(source.name)}. Editá lo que necesites antes de publicar.` : "Completá cada etapa y publicá cuando toda la información esté lista."}</p></div><button class="btn outline" id="cancelProductEditor" type="button">Cancelar</button></div><div class="product-wizard"><div class="product-wizard-progress"><span class="active" data-wizard-indicator="1"><b>1</b> Información</span><span data-wizard-indicator="2"><b>2</b> Precio y stock</span><span data-wizard-indicator="3"><b>3</b> Descripción</span><span data-wizard-indicator="4"><b>4</b> Fotos y publicación</span></div><form id="productForm" class="product-wizard-form"><section class="product-wizard-step" data-wizard-step="1"><small>PASO 1 DE 4</small><h2>¿Qué producto vas a publicar?</h2><p>Usá un título claro para que el cliente entienda rápidamente qué está viendo.</p><div class="form-grid"><div class="field full"><label>Nombre del producto</label><input name="name" value="${escapeHtml(product.name)}" placeholder="Ej.: Mesada con bacha 120 × 60" required></div><div class="field"><label>Categoría</label><select name="category_id" required>${state.categories.map((c) => `<option value="${c.id}" ${product.categoryId === c.id ? "selected" : ""}>${escapeHtml(c.name)}</option>`).join("")}</select></div><div class="field"><label>SKU o código interno</label><input name="sku" value="${escapeHtml(product.sku)}" placeholder="Ej.: MB-12060" required></div></div></section><section class="product-wizard-step hidden" data-wizard-step="2"><small>PASO 2 DE 4</small><h2>Definí el precio y el stock</h2><p>Estos datos se actualizarán inmediatamente en el catálogo.</p><div class="form-grid"><div class="field"><label>Precio final</label><input name="price" type="number" min="0" step="0.01" value="${product.price}" required></div><div class="field"><label>Unidades disponibles</label><input name="stock_quantity" type="number" min="0" value="${product.stock}" required></div></div></section><section class="product-wizard-step hidden" data-wizard-step="3"><small>PASO 3 DE 4</small><h2>Contá los detalles del producto</h2><p>Explicá materiales, medidas, usos y todo lo que ayude al cliente a decidir.</p><div class="form-grid"><div class="field full"><label>Descripción principal</label><textarea name="description" rows="5" required>${escapeHtml(product.desc)}</textarea></div><div class="field full"><label>Detalles adicionales</label><textarea name="details" rows="6">${escapeHtml(product.details)}</textarea></div></div></section><section class="product-wizard-step hidden" data-wizard-step="4"><small>PASO 4 DE 4</small><h2>Agregá fotos y videos</h2><p>La primera imagen será la portada. Podés seleccionar varios archivos a la vez.</p><div class="product-media-inputs"><label class="product-media-drop">＋<b>Seleccionar fotos</b><small>JPG, PNG o WebP · hasta 5 MB cada una</small><input id="productPhotos" type="file" accept="image/png,image/jpeg,image/webp" multiple hidden></label><label class="product-media-drop">▶<b>Seleccionar videos</b><small>MP4 o WebM · hasta 50 MB cada uno</small><input id="productVideos" type="file" accept="video/mp4,video/webm" multiple hidden></label></div><div class="field full"><p class="field-caption">Galería de la publicación</p><div id="existingMedia" class="media-admin-grid">${(product.images || []).map((url, index) => `<label class="media-admin-item">${isVideoUrl(url) ? `<video src="${escapeHtml(url)}" muted></video>` : `<img src="${escapeHtml(url)}" alt="Medio ${index + 1}">`}<span><input type="checkbox" value="${escapeHtml(url)}" data-remove-media> Quitar</span></label>`).join("")}</div><div id="newMediaPreview" class="media-admin-grid"></div></div><div class="publish-review"><b>Todo listo para ${editing ? "guardar" : "publicar"}</b><span>Revisá los pasos anteriores. Podrás modificar la publicación cuando quieras.</span></div></section><div class="product-wizard-actions"><button class="btn outline hidden" id="wizardBack" type="button">← Anterior</button><span></span><button class="btn secondary" id="wizardNext" type="button">Continuar →</button><button class="btn cta hidden" id="wizardPublish" type="submit">${editing ? "Guardar cambios" : "Publicar"}</button></div></form></div>`;
   const photoInput = document.querySelector("#productPhotos");
   const videoInput = document.querySelector("#productVideos");
   const selectedMedia = () => [...photoInput.files, ...videoInput.files];
@@ -1854,12 +2120,43 @@ function openEditProduct(id) {
   };
   photoInput.onchange = renderNewMediaPreview;
   videoInput.onchange = renderNewMediaPreview;
+  let currentStep = 1;
+  const showStep = (step) => {
+    currentStep = Math.max(1, Math.min(4, step));
+    document.querySelectorAll("[data-wizard-step]").forEach((section) =>
+      section.classList.toggle(
+        "hidden",
+        Number(section.dataset.wizardStep) !== currentStep,
+      ),
+    );
+    document.querySelectorAll("[data-wizard-indicator]").forEach((item) => {
+      const number = Number(item.dataset.wizardIndicator);
+      item.classList.toggle("active", number === currentStep);
+      item.classList.toggle("complete", number < currentStep);
+    });
+    document.querySelector("#wizardBack").classList.toggle("hidden", currentStep === 1);
+    document.querySelector("#wizardNext").classList.toggle("hidden", currentStep === 4);
+    document.querySelector("#wizardPublish").classList.toggle("hidden", currentStep !== 4);
+    workspace.scrollTo?.({ top: 0, behavior: "smooth" });
+  };
+  const validateStep = () => {
+    const section = document.querySelector(`[data-wizard-step="${currentStep}"]`);
+    const invalid = [...section.querySelectorAll("input,select,textarea")].find(
+      (field) => !field.checkValidity(),
+    );
+    if (invalid) {
+      invalid.reportValidity();
+      return false;
+    }
+    return true;
+  };
+  document.querySelector("#wizardNext").onclick = () => {
+    if (validateStep()) showStep(currentStep + 1);
+  };
+  document.querySelector("#wizardBack").onclick = () => showStep(currentStep - 1);
+  document.querySelector("#cancelProductEditor").onclick = openAdminProducts;
   document.querySelector("#productForm").onsubmit = (e) =>
     saveProduct(e, product, selectedMedia());
-  document.querySelector("#deleteInForm")?.addEventListener("click", () => {
-    closeModal();
-    deleteProduct(id);
-  });
 }
 async function uploadProductMedia(files) {
   const urls = [];
@@ -1882,7 +2179,9 @@ async function saveProduct(event, current, files) {
     values = Object.fromEntries(new FormData(event.target));
   values.price = Number(values.price);
   values.stock_quantity = Number(values.stock_quantity);
-  values.slug = current.id ? current.slug : slugify(values.name);
+  values.slug = current.id
+    ? current.slug
+    : `${slugify(values.name)}${current.isSimilar ? `-${String(Date.now()).slice(-6)}` : ""}`;
   values.is_active = true;
   setBusy(button, true, "Guardando…");
   try {
@@ -1899,9 +2198,9 @@ async function saveProduct(event, current, files) {
       : supabase.from("products").insert(values);
     const { error } = await query;
     if (error) throw error;
-    await loadStoreData();
-    closeModal();
-    renderAccount();
+    await loadStoreData({ route: false });
+    state.adminView = "products";
+    state.productEditorId = null;
     renderAdminPanel();
     toast(
       current.id ? "Producto actualizado" : "Producto publicado",
