@@ -51,10 +51,11 @@ npx supabase db push
 npx supabase functions deploy mp-create-preference --project-ref dvisdjvzwbfklrpzsuhe --no-verify-jwt
 npx supabase functions deploy mp-webhook --project-ref dvisdjvzwbfklrpzsuhe --no-verify-jwt
 npx supabase functions deploy send-order-email --project-ref dvisdjvzwbfklrpzsuhe --no-verify-jwt
+npx supabase functions deploy admin-delete-user --project-ref dvisdjvzwbfklrpzsuhe --no-verify-jwt
 ```
 
 `db push` aplicará solamente las migraciones pendientes, incluidas `007`, `008`,
-`009` y `010_hide_unpaid_orders.sql`. La migración `008` completa el email de
+`009`, `010` y `011_remove_pending_orders.sql`. La migración `008` completa el email de
 las cuentas existentes, guarda el de los nuevos registros y habilita la lista
 de usuarios del panel sin exponer esos datos a visitantes ni a otros clientes.
 La migración `009` activa la sincronización en vivo de pedidos, preguntas, chat,
@@ -62,11 +63,14 @@ catálogo y usuarios, y agrega el borrado seguro de mensajes y conversaciones.
 La migración `010` oculta los intentos de checkout abandonados. Un pedido recién
 aparece para el cliente y el administrador cuando el webhook acredita el pago
 total o la seña configurada.
+La migración `011` convierte cualquier pedido viejo que todavía figure como
+**Pendiente** en un intento oculto y elimina Pendiente de los estados permitidos.
 
 Después de aplicar `010`, desplegá la función que inicia el checkout:
 
 ```powershell
 npx supabase functions deploy mp-create-preference --project-ref dvisdjvzwbfklrpzsuhe --no-verify-jwt
+npx supabase functions deploy admin-delete-user --project-ref dvisdjvzwbfklrpzsuhe --no-verify-jwt
 ```
 
 El orden es importante: primero `db push` y después el despliegue de la función.
@@ -212,7 +216,8 @@ privadas de clientes autenticados.
    que el panel cambie sin usar F5.
 8. Enviar, responder y eliminar un mensaje; comprobar que ambas ventanas cambien
    en el momento. Repetir publicando una pregunta en un producto.
-9. Abrir Panel general > Usuarios y comprobar nombre, email y teléfono de las cuentas.
+9. Abrir Panel general > Usuarios, comprobar los datos y eliminar una cuenta de
+   prueba. La cuenta administradora no debe mostrar el botón de eliminación.
 
 Si un producto se elimina, se desactiva o se queda sin stock mientras permanece
 guardado en un carrito, la web lo quita al recargar y corrige también el contador.

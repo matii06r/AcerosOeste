@@ -9,3 +9,5 @@ verify_jwt = false
 [functions.send-order-email]
 verify_jwt = false
 
+[functions.admin-delete-user]
+verify_jwt = false

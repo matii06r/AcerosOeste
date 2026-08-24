@@ -8,6 +8,10 @@ const paymentFunction = readFileSync(
   new URL("supabase/functions/mp-create-preference/index.ts", root),
   "utf8",
 );
+const adminDeleteFunction = readFileSync(
+  new URL("supabase/functions/admin-delete-user/index.ts", root),
+  "utf8",
+);
 const customerMigration = readFileSync(
   new URL("supabase/migrations/007_customer_orders_and_support_chat.sql", root),
   "utf8",
@@ -22,6 +26,10 @@ const realtimeMigration = readFileSync(
 );
 const paidOrdersMigration = readFileSync(
   new URL("supabase/migrations/010_hide_unpaid_orders.sql", root),
+  "utf8",
+);
+const finalOrderStatesMigration = readFileSync(
+  new URL("supabase/migrations/011_remove_pending_orders.sql", root),
   "utf8",
 );
 const rows = {
@@ -60,7 +68,10 @@ const rows = {
       category: "Gastronomía",
       description: "Trabajo a medida",
       logo_url: "https://example.test/logo.jpg",
-      images: ["https://example.test/work-1.jpg"],
+      images: [
+        "https://example.test/work-1.jpg",
+        "https://example.test/work-2.jpg",
+      ],
       sort_order: 10,
       is_active: true,
     },
@@ -92,7 +103,7 @@ const rows = {
     {
       id: "order-1",
       user_id: "customer-1",
-      status: "pending",
+      status: "paid",
       subtotal: 100000,
       hidden_by_customer: false,
       created_at: "2026-08-18T10:00:00Z",
@@ -127,6 +138,7 @@ function query(table) {
 }
 let authListener;
 let activeSession = null;
+const invokedFunctions = [];
 const realtimeSubscriptions = [];
 function emitRealtime(table, payload) {
   realtimeSubscriptions
@@ -177,10 +189,12 @@ const client = {
     }),
   },
   functions: {
-    invoke: async () => ({
-      data: { initPoint: "https://example.test/pay" },
-      error: null,
-    }),
+    invoke: async (name) => {
+      invokedFunctions.push(name);
+      return name === "admin-delete-user"
+        ? { data: { deleted: true }, error: null }
+        : { data: { initPoint: "https://example.test/pay" }, error: null };
+    },
   },
   rpc: async (name, values) => {
     if (name === "cancel_own_order") {
@@ -212,7 +226,7 @@ const executable = html
   .replace('<script src="assets/vendor/supabase.js?v=1"></script>', "")
   .replace('<script src="config.js"></script>', "")
   .replace(
-    '<script src="app.js?v=17"></script>',
+    '<script src="app.js?v=18"></script>',
     `<script>${app.replaceAll("</script>", "<\\/script>")}</script>`,
   );
 const errors = [];
@@ -331,6 +345,24 @@ assert(
 assert(Boolean(d.querySelector("#productsBtn")), "Falta la pestaña Productos");
 assert(Boolean(d.querySelector("#usersBtn")), "Falta la pestaña Usuarios");
 assert(Boolean(d.querySelector("#chatsBtn")), "Falta la pestaña Chats");
+rows.profiles = [
+  {
+    id: "admin-1",
+    full_name: "Administrador",
+    email: "gestionacerosoeste@gmail.com",
+    phone: "11 3432 2199",
+    role: "admin",
+    created_at: "2026-08-01T10:00:00Z",
+  },
+  {
+    id: "customer-1",
+    full_name: "Cliente prueba",
+    email: "cliente@example.test",
+    phone: "11 2222 3333",
+    role: "customer",
+    created_at: "2026-08-02T10:00:00Z",
+  },
+];
 d.querySelector("#usersBtn")?.click();
 await new Promise((resolve) => setTimeout(resolve, 30));
 assert(
@@ -339,6 +371,17 @@ assert(
       "gestionacerosoeste@gmail.com",
     ),
   "El panel no muestra los datos de contacto de los usuarios",
+);
+assert(
+  !d.querySelector('[data-delete-user="admin-1"]') &&
+    Boolean(d.querySelector('[data-delete-user="customer-1"]')),
+  "El panel no protege al admin o no permite eliminar clientes",
+);
+d.querySelector('[data-delete-user="customer-1"]')?.click();
+await new Promise((resolve) => setTimeout(resolve, 40));
+assert(
+  invokedFunctions.includes("admin-delete-user"),
+  "El botón de eliminar usuario no llama a la función protegida",
 );
 d.querySelector("#productsBtn")?.click();
 assert(
@@ -390,22 +433,25 @@ assert(
   "La ficha individual del cliente no se renderizó",
 );
 assert(
-  d.querySelectorAll("#clientDetailContent [data-client-detail-photo]").length === 1,
+  d.querySelectorAll("#clientDetailContent [data-client-detail-photo]").length === 2,
   "La ficha individual no muestra los trabajos",
 );
 assert(
-  d.querySelector(".client-detail-head")?.textContent.includes(
+  d.querySelector(".client-profile-card")?.textContent.includes(
     "Gastronomía",
   ) &&
-    d.querySelector(".client-detail-head")?.textContent.includes(
+    d.querySelector(".client-profile-card")?.textContent.includes(
       "Cliente ejemplo",
     ) &&
-    !d.querySelector(".client-detail-head")?.textContent.includes(
+    !d.querySelector(".client-profile-card")?.textContent.includes(
       "Trabajo a medida",
     ) &&
-    d.querySelector(".client-work-copy")?.textContent.includes(
-      "Trabajo a medida",
-    ),
+    d.querySelector(".client-project-copy")?.textContent ===
+      "Trabajo a medida" &&
+    !d.querySelector("#clientDetailContent")?.textContent.includes(
+      "TRABAJO REALIZADO",
+    ) &&
+    Boolean(d.querySelector(".client-photo-stack")),
   "La descripción sigue pegada al logo en vez de acompañar las fotos",
 );
 assert(
@@ -419,7 +465,7 @@ await new Promise((resolve) => setTimeout(resolve, 30));
 rows.orders[0].status = "cancelled";
 emitRealtime("orders", {
   eventType: "UPDATE",
-  old: { id: "order-1", status: "pending" },
+  old: { id: "order-1", status: "paid" },
   new: { id: "order-1", status: "cancelled" },
 });
 await new Promise((resolve) => setTimeout(resolve, 220));
@@ -427,7 +473,7 @@ assert(
   d.querySelector('[data-order-status="order-1"]')?.value === "cancelled",
   "La cancelación no se sincroniza en el panel del administrador",
 );
-rows.orders[0].status = "pending";
+rows.orders[0].status = "paid";
 await authListener?.("SIGNED_OUT", null);
 await new Promise((resolve) => setTimeout(resolve, 30));
 rows.profiles = {
@@ -447,8 +493,9 @@ dom.window.location.hash = "#cuenta";
 await new Promise((resolve) => setTimeout(resolve, 30));
 assert(Boolean(d.querySelector("#accountChatTab")), "Falta el chat del cliente");
 assert(
-  Boolean(d.querySelector("[data-cancel-order]")),
-  "El cliente no puede cancelar un pedido pendiente",
+  !d.querySelector("[data-cancel-order]") &&
+    !d.querySelector("#ordersList")?.textContent.includes("Pendiente"),
+  "La cuenta del cliente todavía muestra pedidos pendientes",
 );
 rows.orders[0].status = "paid";
 d.querySelector("#accountOrdersTab")?.click();
@@ -550,8 +597,24 @@ assert(
   paidOrdersMigration.includes("status = 'awaiting_payment'") &&
     paidOrdersMigration.includes("status <> 'awaiting_payment'") &&
     paidOrdersMigration.includes("deposit_percentage = 50") &&
-    app.match(/\.neq\("status", "awaiting_payment"\)/g)?.length >= 2,
+    app.match(/\.in\("status", \["deposit_paid"/g)?.length >= 2 &&
+    !app.includes('data-cancel-order'),
   "Los intentos sin pago todavía pueden aparecer como pedidos",
+);
+assert(
+  finalOrderStatesMigration.includes("where status = 'pending'") &&
+    finalOrderStatesMigration.includes("alter column status set default 'awaiting_payment'") &&
+    !finalOrderStatesMigration
+      .split("add constraint orders_status_check")[1]
+      ?.includes("'pending'"),
+  "La base de datos todavía acepta Pendiente como estado comercial",
+);
+assert(
+  app.includes('supabase.functions.invoke("admin-delete-user"') &&
+    adminDeleteFunction.includes("auth.admin.deleteUser") &&
+    adminDeleteFunction.includes('requester?.role !== "admin"') &&
+    adminDeleteFunction.includes("No podés eliminar tu propia cuenta"),
+  "La eliminación de usuarios no quedó protegida para administradores",
 );
 await authListener?.("SIGNED_OUT", null);
 await new Promise((resolve) => setTimeout(resolve, 30));
@@ -586,5 +649,5 @@ if (errors.length) {
   process.exit(1);
 }
 console.log(
-  "QA OK: pedidos sólo tras pago, ficha de clientes, carrito, pagos y sincronización en vivo",
+  "QA OK: clientes profesionales, pedidos sin Pendiente y eliminación segura de usuarios",
 );

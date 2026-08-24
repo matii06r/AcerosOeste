@@ -537,9 +537,10 @@ function showClientPage(clientId) {
   showStandalonePage("#cliente-detalle");
   const page = document.querySelector("#clientDetailContent");
   const logo = client.logo_url;
-  page.innerHTML = `<div class="client-detail-head"><p class="eyebrow orange">${escapeHtml(client.category || "CLIENTE")}</p><div class="client-detail-logo">${logo ? `<img src="${escapeHtml(logo)}" alt="${escapeHtml(client.name)}">` : `<span>${escapeHtml(client.name.slice(0, 2).toUpperCase())}</span>`}</div><h1>${escapeHtml(client.name)}</h1></div><section class="client-work-layout"><div class="client-work-copy"><p class="eyebrow orange">TRABAJO REALIZADO</p><h2>Lo que hicimos para ${escapeHtml(client.name)}</h2><p>${escapeHtml(client.description || "Equipamiento fabricado a medida por Aceros Oeste.")}</p></div><div class="client-detail-gallery">${client.images?.length ? client.images.map((url, index) => `<button type="button" data-client-detail-photo="${escapeHtml(url)}"><img src="${escapeHtml(url)}" alt="Trabajo realizado para ${escapeHtml(client.name)}, foto ${index + 1}" loading="lazy"></button>`).join("") : '<div class="empty">Próximamente publicaremos las fotos de este trabajo.</div>'}</div></section>`;
+  const description = String(client.description || "").trim();
+  page.innerHTML = `<article class="client-profile-card"><p class="eyebrow orange">${escapeHtml(client.category || "CLIENTE")}</p><div class="client-profile-logo">${logo ? `<img src="${escapeHtml(logo)}" alt="${escapeHtml(client.name)}">` : `<span>${escapeHtml(client.name.slice(0, 2).toUpperCase())}</span>`}</div><h1>${escapeHtml(client.name)}</h1></article><section class="client-project-content">${description ? `<div class="client-project-copy">${escapeHtml(description)}</div>` : ""}<div class="client-detail-gallery client-photo-stack">${client.images?.length ? client.images.map((url, index) => `<button type="button" data-client-detail-photo="${escapeHtml(url)}"><img src="${escapeHtml(url)}" alt="Trabajo para ${escapeHtml(client.name)}, foto ${index + 1}" loading="lazy"></button>`).join("") : '<div class="empty">Todavía no hay fotos publicadas para este cliente.</div>'}</div></section>`;
   document.querySelectorAll("[data-client-detail-photo]").forEach((button) => {
-    button.onclick = () => openModal(`<button class="modal-close" data-close>×</button><p class="eyebrow orange">TRABAJO REALIZADO</p><h2>${escapeHtml(client.name)}</h2><img class="client-photo-large" src="${escapeHtml(button.dataset.clientDetailPhoto)}" alt="Trabajo realizado para ${escapeHtml(client.name)}">`);
+    button.onclick = () => openModal(`<button class="modal-close" data-close>×</button><h2>${escapeHtml(client.name)}</h2><img class="client-photo-large" src="${escapeHtml(button.dataset.clientDetailPhoto)}" alt="Trabajo para ${escapeHtml(client.name)}">`);
   });
   window.scrollTo(0, 0);
 }
@@ -1228,7 +1229,7 @@ async function loadOrders() {
   const { data, error } = await supabase
     .from("orders")
     .select("*, order_items(*)")
-    .neq("status", "awaiting_payment")
+    .in("status", ["deposit_paid", "paid", "in_transit", "fulfilled", "cancelled"])
     .order("created_at", { ascending: false });
   const el = document.querySelector("#ordersList");
   if (!el) return;
@@ -1237,37 +1238,23 @@ async function loadOrders() {
     return;
   }
   const visibleOrders = (data || []).filter(
-    (order) => !order.hidden_by_customer,
+    (order) =>
+      !order.hidden_by_customer &&
+      ["deposit_paid", "paid", "in_transit", "fulfilled", "cancelled"].includes(
+        order.status,
+      ),
   );
   el.innerHTML = visibleOrders.length
     ? visibleOrders
         .map(
           (order) =>
-            `<article class="customer-order" data-customer-order="${order.id}"><div class="customer-order-title"><b>Pedido ${String(order.id).slice(0, 8).toUpperCase()}</b><span class="badge" style="position:static">${statusLabel(order.status)}</span></div><p>${new Date(order.created_at).toLocaleDateString("es-AR")} · ${money(order.subtotal)}</p><small>${(order.order_items || []).map((i) => `${i.quantity}× ${escapeHtml(i.product_name)}`).join(" · ")}</small><div class="customer-order-actions">${order.status === "pending" ? `<button class="btn danger" data-cancel-order="${order.id}" type="button">Cancelar pedido</button>` : ""}${["cancelled", "fulfilled"].includes(order.status) ? `<button class="btn outline" data-hide-order="${order.id}" type="button">Quitar de mi cuenta</button>` : ""}${["deposit_paid", "paid", "in_transit"].includes(order.status) ? `<a class="btn outline" target="_blank" rel="noopener" href="https://wa.me/${state.settings.sales_whatsapp || "5491134322199"}?text=${encodeURIComponent(customerOrderConsultation(order))}">Consultar</a>` : ""}</div></article>`,
+            `<article class="customer-order" data-customer-order="${order.id}"><div class="customer-order-title"><b>Pedido ${String(order.id).slice(0, 8).toUpperCase()}</b><span class="badge" style="position:static">${statusLabel(order.status)}</span></div><p>${new Date(order.created_at).toLocaleDateString("es-AR")} · ${money(order.subtotal)}</p><small>${(order.order_items || []).map((i) => `${i.quantity}× ${escapeHtml(i.product_name)}`).join(" · ")}</small><div class="customer-order-actions">${["cancelled", "fulfilled"].includes(order.status) ? `<button class="btn outline" data-hide-order="${order.id}" type="button">Quitar de mi cuenta</button>` : ""}${["deposit_paid", "paid", "in_transit"].includes(order.status) ? `<a class="btn outline" target="_blank" rel="noopener" href="https://wa.me/${state.settings.sales_whatsapp || "5491134322199"}?text=${encodeURIComponent(customerOrderConsultation(order))}">Consultar</a>` : ""}</div></article>`,
         )
         .join("")
     : '<div class="notice">Todavía no tenés pedidos.</div>';
-  document.querySelectorAll("[data-cancel-order]").forEach((button) => {
-    button.onclick = () => cancelCustomerOrder(button.dataset.cancelOrder, button);
-  });
   document.querySelectorAll("[data-hide-order]").forEach((button) => {
     button.onclick = () => hideCustomerOrder(button.dataset.hideOrder, button);
   });
-}
-async function cancelCustomerOrder(orderId, button) {
-  if (!confirm("¿Querés cancelar este pedido pendiente?")) return;
-  setBusy(button, true, "Cancelando…");
-  const { error } = await supabase.rpc("cancel_own_order", {
-    p_order_id: orderId,
-  });
-  setBusy(button, false);
-  if (error)
-    return toast(
-      "El pedido ya no puede cancelarse desde la cuenta. Contactanos si ya realizaste el pago.",
-      "error",
-    );
-  toast("Pedido cancelado", "success");
-  loadOrders();
 }
 async function hideCustomerOrder(orderId, button) {
   if (!confirm("¿Quitar este pedido de tu historial visible?")) return;
@@ -1431,7 +1418,6 @@ async function openCustomerChat() {
 function statusLabel(status) {
   return (
     {
-      pending: "Pendiente",
       awaiting_payment: "Esperando pago",
       deposit_paid: "Seña pagada",
       paid: "Pagado",
@@ -1530,6 +1516,14 @@ async function openAdminUsers() {
         );
       });
     });
+  document.querySelectorAll("[data-delete-user]").forEach((button) => {
+    button.onclick = () =>
+      deleteAdminUser(
+        button.dataset.deleteUser,
+        button.dataset.userName || "este usuario",
+        button,
+      );
+  });
 }
 function adminUserMarkup(profile) {
   const name = profile.full_name?.trim() || "Sin nombre";
@@ -1545,7 +1539,38 @@ function adminUserMarkup(profile) {
   const createdAt = profile.created_at
     ? new Date(profile.created_at).toLocaleDateString("es-AR")
     : "Sin fecha";
-  return `<article class="admin-user-card" data-admin-user="${search}"><div class="admin-user-primary"><span class="person-icon" aria-hidden="true">●</span><div><b>${escapeHtml(name)}</b><small>${profile.role === "admin" ? "Administrador" : "Cliente"} · Alta ${escapeHtml(createdAt)}</small></div></div><div class="admin-user-details"><span><small>Email</small>${email !== "Sin email" ? `<a href="mailto:${escapeHtml(email)}">${escapeHtml(email)}</a>` : `<b>${email}</b>`}</span><span><small>Teléfono</small><b>${escapeHtml(phone)}</b></span></div><div class="admin-user-actions">${email !== "Sin email" ? `<a class="btn outline" href="mailto:${escapeHtml(email)}">Enviar email</a>` : ""}${whatsapp ? `<a class="btn secondary" href="https://wa.me/${whatsapp}" target="_blank" rel="noopener">WhatsApp</a>` : ""}</div></article>`;
+  const canDelete =
+    profile.role !== "admin" && String(profile.id) !== String(state.user?.id);
+  return `<article class="admin-user-card" data-admin-user="${search}"><div class="admin-user-primary"><span class="person-icon" aria-hidden="true">●</span><div><b>${escapeHtml(name)}</b><small>${profile.role === "admin" ? "Administrador" : "Cliente"} · Alta ${escapeHtml(createdAt)}</small></div></div><div class="admin-user-details"><span><small>Email</small>${email !== "Sin email" ? `<a href="mailto:${escapeHtml(email)}">${escapeHtml(email)}</a>` : `<b>${email}</b>`}</span><span><small>Teléfono</small><b>${escapeHtml(phone)}</b></span></div><div class="admin-user-actions">${email !== "Sin email" ? `<a class="btn outline" href="mailto:${escapeHtml(email)}">Enviar email</a>` : ""}${whatsapp ? `<a class="btn secondary" href="https://wa.me/${whatsapp}" target="_blank" rel="noopener">WhatsApp</a>` : ""}${canDelete ? `<button class="btn danger" type="button" data-delete-user="${escapeHtml(profile.id)}" data-user-name="${escapeHtml(name)}">Eliminar cuenta</button>` : ""}</div></article>`;
+}
+async function deleteAdminUser(userId, userName, button) {
+  if (
+    !confirm(
+      `¿Eliminar definitivamente la cuenta de ${userName}? Sus chats se borrarán, pero los pedidos pagados se conservarán como registro.`,
+    )
+  )
+    return;
+  setBusy(button, true, "Eliminando…");
+  const { data, error } = await supabase.functions.invoke("admin-delete-user", {
+    body: { userId },
+  });
+  setBusy(button, false);
+  if (error || !data?.deleted) {
+    let message = data?.error;
+    if (error?.context?.json) {
+      try {
+        message = (await error.context.json())?.error || message;
+      } catch {
+        // Se muestra el mensaje general si la respuesta no contiene JSON.
+      }
+    }
+    return toast(
+      message || error?.message || "No se pudo eliminar la cuenta.",
+      "error",
+    );
+  }
+  toast("Cuenta eliminada", "success");
+  await openAdminUsers();
 }
 function openCategories() {
   stopChatRealtime();
@@ -1606,7 +1631,7 @@ function openClientManager() {
 }
 function openClientEditor(id) {
   const client = state.clients.find((item) => item.id === id) || { name: "", category: "Gastronomía", description: "", logo_url: "", images: [], sort_order: 0 };
-  openModal(`<button class="modal-close" data-close>×</button><p class="eyebrow orange">${id ? "EDITAR" : "NUEVO"} CLIENTE</p><h2>${id ? "Actualizar publicación" : "Agregar cliente"}</h2><form id="clientForm" class="form-grid"><div class="field"><label>Nombre</label><input name="name" value="${escapeHtml(client.name)}" required></div><div class="field"><label>Rubro</label><input name="category" value="${escapeHtml(client.category)}"></div><div class="field full"><label>Descripción del trabajo</label><textarea name="description" rows="3">${escapeHtml(client.description)}</textarea></div><div class="field"><label>Orden</label><input name="sort_order" type="number" value="${Number(client.sort_order) || 0}"></div><div class="field"><label><input name="is_active" type="checkbox" ${client.is_active === false ? "" : "checked"}> Visible</label></div><div class="field full"><label class="image-upload-label">Logo del cliente<input id="clientLogo" type="file" accept="image/png,image/jpeg,image/webp" hidden></label>${client.logo_url ? `<img class="preview-admin-img" src="${escapeHtml(client.logo_url)}" alt="Logo actual">` : ""}</div><div class="field full"><label class="image-upload-label">Fotos de trabajos<input id="clientPhotos" type="file" accept="image/png,image/jpeg,image/webp" multiple hidden></label><div class="media-admin-grid">${(client.images || []).map((url) => `<label class="media-admin-item"><img src="${escapeHtml(url)}" alt="Trabajo"><span><input type="checkbox" value="${escapeHtml(url)}" data-remove-client-photo> Quitar</span></label>`).join("")}</div></div><button class="btn cta field full">Guardar cliente</button></form>`);
+  openModal(`<button class="modal-close" data-close>×</button><p class="eyebrow orange">${id ? "EDITAR" : "NUEVO"} CLIENTE</p><h2>${id ? "Actualizar publicación" : "Agregar cliente"}</h2><form id="clientForm" class="form-grid"><div class="field"><label>Nombre</label><input name="name" value="${escapeHtml(client.name)}" required></div><div class="field"><label>Rubro</label><input name="category" value="${escapeHtml(client.category)}"></div><div class="field full"><label>Texto que aparecerá en la página del cliente</label><textarea name="description" rows="8" placeholder="Escribí libremente qué trabajos realizaron, materiales, medidas y detalles del proyecto.">${escapeHtml(client.description)}</textarea><small>Este texto se mostrará exactamente como lo escribas, sin títulos automáticos.</small></div><div class="field"><label>Orden</label><input name="sort_order" type="number" value="${Number(client.sort_order) || 0}"></div><div class="field"><label><input name="is_active" type="checkbox" ${client.is_active === false ? "" : "checked"}> Visible</label></div><div class="field full"><label class="image-upload-label">Logo del cliente<input id="clientLogo" type="file" accept="image/png,image/jpeg,image/webp" hidden></label>${client.logo_url ? `<img class="preview-admin-img" src="${escapeHtml(client.logo_url)}" alt="Logo actual">` : ""}</div><div class="field full"><label class="image-upload-label">Fotos de trabajos<input id="clientPhotos" type="file" accept="image/png,image/jpeg,image/webp" multiple hidden></label><small>Podés agregar varias ahora o volver más adelante. Se mostrarán una debajo de otra.</small><div class="media-admin-grid">${(client.images || []).map((url) => `<label class="media-admin-item"><img src="${escapeHtml(url)}" alt="Trabajo"><span><input type="checkbox" value="${escapeHtml(url)}" data-remove-client-photo> Quitar</span></label>`).join("")}</div></div><button class="btn cta field full">Guardar cliente</button></form>`);
   document.querySelector("#clientForm").onsubmit = (event) => saveClient(event, client);
 }
 async function saveClient(event, current) {
@@ -1732,14 +1757,19 @@ async function openAdminOrders() {
   const { data, error } = await supabase
     .from("orders")
     .select("*, order_items(*)")
-    .neq("status", "awaiting_payment")
+    .in("status", ["deposit_paid", "paid", "in_transit", "fulfilled", "cancelled"])
     .order("created_at", { ascending: false })
     .limit(100);
   if (error) {
     ws.innerHTML = '<div class="notice">No pudimos cargar los pedidos.</div>';
     return;
   }
-  ws.innerHTML = `<h3>Pedidos</h3>${data?.length ? data.map((o) => `<article class="customer-order" data-order-card="${o.id}"><div class="order-heading"><div><small>CLIENTE</small><b>${escapeHtml(o.customer_name || "Sin nombre")}</b></div><span>Pedido ${String(o.id).slice(0, 8).toUpperCase()}</span></div><div class="order-details"><span><small>Email</small>${escapeHtml(o.customer_email || "Sin email")}</span><span><small>Teléfono</small>${escapeHtml(o.customer_phone || "Sin teléfono")}</span><span><small>Total</small>${money(o.subtotal)}</span></div>${o.order_items?.length ? `<div class="order-items">${o.order_items.map((item) => `<span>${Number(item.quantity) || 0}× ${escapeHtml(item.product_name || "Producto")}</span>`).join("")}</div>` : ""}<label class="order-status-label">Estado<select data-order-status="${o.id}">${["pending", "deposit_paid", "paid", "in_transit", "fulfilled", "cancelled"].map((s) => `<option value="${s}" ${o.status === s ? "selected" : ""}>${statusLabel(s)}</option>`).join("")}</select></label>${["fulfilled", "cancelled"].includes(o.status) ? `<button class="btn danger" data-delete-order="${o.id}">Eliminar pedido</button>` : ""}</article>`).join("") : '<div class="notice">No hay pedidos.</div>'}`;
+  const visibleOrders = (data || []).filter((order) =>
+    ["deposit_paid", "paid", "in_transit", "fulfilled", "cancelled"].includes(
+      order.status,
+    ),
+  );
+  ws.innerHTML = `<h3>Pedidos</h3>${visibleOrders.length ? visibleOrders.map((o) => `<article class="customer-order" data-order-card="${o.id}"><div class="order-heading"><div><small>CLIENTE</small><b>${escapeHtml(o.customer_name || "Sin nombre")}</b></div><span>Pedido ${String(o.id).slice(0, 8).toUpperCase()}</span></div><div class="order-details"><span><small>Email</small>${escapeHtml(o.customer_email || "Sin email")}</span><span><small>Teléfono</small>${escapeHtml(o.customer_phone || "Sin teléfono")}</span><span><small>Total</small>${money(o.subtotal)}</span></div>${o.order_items?.length ? `<div class="order-items">${o.order_items.map((item) => `<span>${Number(item.quantity) || 0}× ${escapeHtml(item.product_name || "Producto")}</span>`).join("")}</div>` : ""}<label class="order-status-label">Estado<select data-order-status="${o.id}">${["deposit_paid", "paid", "in_transit", "fulfilled", "cancelled"].map((s) => `<option value="${s}" ${o.status === s ? "selected" : ""}>${statusLabel(s)}</option>`).join("")}</select></label>${["fulfilled", "cancelled"].includes(o.status) ? `<button class="btn danger" data-delete-order="${o.id}">Eliminar pedido</button>` : ""}</article>`).join("") : '<div class="notice">No hay pedidos con pago acreditado.</div>'}`;
   document.querySelectorAll("[data-order-status]").forEach(
     (select) =>
       (select.onchange = async () => {
