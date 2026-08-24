@@ -2,6 +2,7 @@ type EmailInput = {
   to: string;
   subject: string;
   html: string;
+  bccAdmin?: boolean;
 };
 
 export async function sendTransactionalEmail(input: EmailInput) {
@@ -21,7 +22,7 @@ export async function sendTransactionalEmail(input: EmailInput) {
     body: JSON.stringify({
       from,
       to: [input.to],
-      bcc: [adminEmail],
+      ...(input.bccAdmin === false ? {} : { bcc: [adminEmail] }),
       reply_to: adminEmail,
       subject: input.subject,
       html: input.html,

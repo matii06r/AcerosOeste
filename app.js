@@ -23,12 +23,13 @@ const categoryVisuals = {
   Estanterías: "▥",
 };
 const avatarPresets = [
-  { id: "person", icon: "●", label: "Clásico" },
-  { id: "chef", icon: "♨", label: "Cocina" },
-  { id: "builder", icon: "◆", label: "Fabricación" },
-  { id: "tools", icon: "✦", label: "Herramientas" },
-  { id: "steel", icon: "A", label: "Aceros Oeste" },
-  { id: "star", icon: "★", label: "Destacado" },
+  { id: "orange", label: "Naranja" },
+  { id: "blue", label: "Azul" },
+  { id: "red", label: "Rojo" },
+  { id: "purple", label: "Violeta" },
+  { id: "pink", label: "Rosa" },
+  { id: "green", label: "Verde" },
+  { id: "sky", label: "Celeste" },
 ];
 const fallbackProducts = [
   {
@@ -120,11 +121,13 @@ const state = {
   activeConversationId: null,
   activeConversationName: "",
   activeOrderId: null,
+  notifications: [],
 };
 const realtimeTimers = new Map();
 const isAdmin = () => state.profile?.role === "admin";
 const cartStorageKey = () => `ao_cart_${state.user?.id || "guest"}`;
 const pendingCheckoutKey = "ao_pending_checkout";
+const storeCacheKey = "ao_store_cache_v1";
 const slugify = (text) =>
   String(text)
     .toLowerCase()
@@ -149,8 +152,13 @@ function avatarMarkup(profile = {}, className = "user-avatar") {
   const url = String(profile?.avatar_url || "").trim();
   const preset =
     avatarPresets.find((item) => item.id === profile?.avatar_preset) ||
-    avatarPresets[0];
-  return `<span class="${escapeHtml(className)} avatar-${escapeHtml(preset.id)}" aria-hidden="true">${url ? `<img src="${escapeHtml(url)}" alt="">` : `<b>${escapeHtml(preset.icon)}</b>`}</span>`;
+    avatarPresets.find((item) => item.id === "blue");
+  const initial =
+    String(profile?.full_name || profile?.email || "U")
+      .trim()
+      .slice(0, 1)
+      .toUpperCase() || "U";
+  return `<span class="${escapeHtml(className)} avatar-${escapeHtml(preset.id)}" aria-hidden="true">${url ? `<img src="${escapeHtml(url)}" alt="">` : `<b>${escapeHtml(initial)}</b>`}</span>`;
 }
 function rememberPendingCheckout(orderId, lines) {
   localStorage.setItem(
@@ -284,7 +292,35 @@ function mapProduct(row) {
   };
 }
 
-async function loadStoreData({ route = true } = {}) {
+function restoreStoreCache() {
+  const cached = safeRead(storeCacheKey, null);
+  if (!cached?.products || !Array.isArray(cached.products)) return false;
+  state.products = cached.products;
+  state.categories = Array.isArray(cached.categories) ? cached.categories : [];
+  state.clients = Array.isArray(cached.clients) ? cached.clients : [];
+  if (cached.settings) state.settings = cached.settings;
+  state.loading = false;
+  state.usingFallback = false;
+  return true;
+}
+function persistStoreCache() {
+  try {
+    localStorage.setItem(
+      storeCacheKey,
+      JSON.stringify({
+        products: state.products,
+        categories: state.categories,
+        clients: state.clients,
+        settings: state.settings,
+        savedAt: new Date().toISOString(),
+      }),
+    );
+  } catch (error) {
+    console.warn("No se pudo guardar el catálogo local", error);
+  }
+}
+
+async function loadStoreData({ route = true, retry = true } = {}) {
   const [
     { data: categories, error: catError },
     { data: products, error: productError },
@@ -303,40 +339,24 @@ async function loadStoreData({ route = true } = {}) {
       .order("sort_order")
       .order("created_at", { ascending: false }),
   ]);
-  state.clients = clientsError ? [] : clients || [];
+  if (!clientsError) state.clients = clients || [];
   if (catError || productError) {
     console.error(catError || productError);
-    state.products = fallbackProducts;
-    state.categories = [
-      ...new Set(fallbackProducts.map((p) => p.category)),
-    ].map((name, index) => ({
-      id: `demo-cat-${index}`,
-      name,
-      slug: slugify(name),
-    }));
-    state.usingFallback = true;
+    const keptCatalog = Boolean(state.products.length) || restoreStoreCache();
+    state.loading = false;
     toast(
-      "No pudimos conectar el catálogo. Mostramos productos de referencia.",
+      keptCatalog
+        ? "La conexión se interrumpió. Conservamos el catálogo completo mientras reconectamos."
+        : "No pudimos cargar el catálogo. Reintentamos automáticamente.",
       "error",
     );
-  } else if (products?.length) {
+    if (retry)
+      setTimeout(() => loadStoreData({ route: false, retry: false }), 1200);
+  } else {
     state.categories = categories || [];
     state.products = (products || []).map(mapProduct);
     state.usingFallback = false;
-  } else {
-    state.products = fallbackProducts;
-    state.categories = [
-      ...new Set(fallbackProducts.map((product) => product.category)),
-    ].map((name, index) => ({
-      id: `demo-cat-${index}`,
-      name,
-      slug: slugify(name),
-    }));
-    state.usingFallback = true;
-    toast(
-      "El catálogo está listo para que el administrador publique productos.",
-      "info",
-    );
+    persistStoreCache();
   }
   if (settings) state.settings = settings;
   state.loading = false;
@@ -436,6 +456,144 @@ function handleConversationRealtime(payload) {
       scheduleRealtimeRefresh("deleted-customer-chat", openCustomerChat);
   }
 }
+function notificationTarget(notification) {
+  if (notification?.type === "question" && notification.product_id) {
+    const product = state.products.find(
+      (item) => String(item.id) === String(notification.product_id),
+    );
+    if (product) return `/#producto/${encodeURIComponent(product.slug)}`;
+  }
+  return "/#panel-general";
+}
+async function showDeviceNotification(notification) {
+  if (
+    !isAdmin() ||
+    !("Notification" in window) ||
+    Notification.permission !== "granted" ||
+    !navigator.serviceWorker
+  )
+    return;
+  try {
+    const registration = await navigator.serviceWorker.ready;
+    await registration.showNotification(notification.title || "Aceros Oeste", {
+      body: notification.body || "Tenés una novedad en el panel.",
+      icon: "/assets/favicon.png",
+      badge: "/assets/favicon.png",
+      tag: `aceros-${notification.id}`,
+      data: { url: notificationTarget(notification) },
+    });
+  } catch (error) {
+    console.warn("No se pudo mostrar la notificación del dispositivo", error);
+  }
+}
+async function enableDeviceNotifications() {
+  if (!("Notification" in window))
+    return toast("Este navegador no admite notificaciones.", "error");
+  const permission = await Notification.requestPermission();
+  renderNotificationCenter();
+  toast(
+    permission === "granted"
+      ? "Notificaciones del dispositivo activadas"
+      : "El navegador no autorizó las notificaciones",
+    permission === "granted" ? "success" : "error",
+  );
+}
+function renderNotificationCenter() {
+  const center = document.querySelector("#adminNotificationCenter");
+  const dropdown = document.querySelector("#notificationDropdown");
+  const count = document.querySelector("#notificationCount");
+  if (!center || !dropdown || !count) return;
+  center.classList.toggle("hidden", !isAdmin());
+  if (!isAdmin()) return;
+  const unread = state.notifications.filter((item) => !item.is_read).length;
+  count.textContent = unread > 99 ? "99+" : String(unread);
+  count.classList.toggle("hidden", unread === 0);
+  dropdown.innerHTML = `<header><div><b>Notificaciones</b><small>${unread ? `${unread} sin leer` : "Todo al día"}</small></div>${unread ? '<button id="readAllNotifications" type="button">Marcar leídas</button>' : ""}</header>${"Notification" in window && Notification.permission !== "granted" ? '<button id="enableDeviceNotifications" class="notification-permission" type="button"><b>Activar avisos en este dispositivo</b><small>Recibilos mientras el panel esté abierto.</small></button>' : ""}<div class="notification-list">${state.notifications.length ? state.notifications.map((item) => `<button class="notification-item ${item.is_read ? "" : "unread"}" data-notification-id="${escapeHtml(item.id)}" type="button"><i>${item.type === "question" ? "?" : "…"}</i><span><b>${escapeHtml(item.title)}</b><small>${escapeHtml(item.body)}</small><time>${new Date(item.created_at).toLocaleString("es-AR", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}</time></span></button>`).join("") : '<p class="notification-empty">No hay notificaciones nuevas.</p>'}</div>`;
+  document.querySelector("#enableDeviceNotifications")?.addEventListener(
+    "click",
+    enableDeviceNotifications,
+  );
+  document.querySelector("#readAllNotifications")?.addEventListener(
+    "click",
+    markAllNotificationsRead,
+  );
+  dropdown.querySelectorAll("[data-notification-id]").forEach((button) => {
+    button.onclick = () =>
+      openAdminNotification(
+        state.notifications.find(
+          (item) => String(item.id) === button.dataset.notificationId,
+        ),
+      );
+  });
+}
+async function loadAdminNotifications() {
+  if (!supabase || !isAdmin()) {
+    state.notifications = [];
+    renderNotificationCenter();
+    return;
+  }
+  const { data, error } = await supabase
+    .from("admin_notifications")
+    .select("*")
+    .order("created_at", { ascending: false })
+    .limit(40);
+  if (error) {
+    console.error("No se pudieron cargar las notificaciones", error);
+    return;
+  }
+  state.notifications = data || [];
+  renderNotificationCenter();
+  const unread = state.notifications.filter((item) => !item.is_read).length;
+  if (navigator.setAppBadge) {
+    if (unread) navigator.setAppBadge(unread).catch(() => {});
+    else navigator.clearAppBadge?.().catch(() => {});
+  }
+}
+async function markAllNotificationsRead() {
+  const { error } = await supabase
+    .from("admin_notifications")
+    .update({ is_read: true })
+    .eq("is_read", false);
+  if (error) return toast("No pudimos actualizar las notificaciones.", "error");
+  state.notifications = state.notifications.map((item) => ({
+    ...item,
+    is_read: true,
+  }));
+  renderNotificationCenter();
+}
+async function openAdminNotification(notification) {
+  if (!notification) return;
+  document.querySelector("#notificationDropdown")?.classList.add("hidden");
+  document.querySelector("#notificationBell")?.setAttribute("aria-expanded", "false");
+  if (!notification.is_read)
+    await supabase
+      .from("admin_notifications")
+      .update({ is_read: true })
+      .eq("id", notification.id);
+  notification.is_read = true;
+  renderNotificationCenter();
+  if (notification.type === "question" && notification.product_id) {
+    const product = state.products.find(
+      (item) => String(item.id) === String(notification.product_id),
+    );
+    if (product) {
+      location.hash = `producto/${encodeURIComponent(product.slug)}`;
+      return;
+    }
+  }
+  location.hash = "panel-general";
+  state.adminView = "chats";
+  renderAdminPanel();
+  await openAdminChats();
+}
+function handleAdminNotificationRealtime(payload) {
+  if (!isAdmin()) return;
+  scheduleRealtimeRefresh("admin-notifications", loadAdminNotifications, 80);
+  if (payload?.eventType === "INSERT" && payload.new) {
+    toast(payload.new.title || "Nueva consulta", "notification");
+    showDeviceNotification(payload.new);
+  }
+}
 function stopAppRealtime() {
   if (!state.liveChannel || !supabase?.removeChannel) return;
   supabase.removeChannel(state.liveChannel);
@@ -480,6 +638,11 @@ function startAppRealtime() {
       "postgres_changes",
       { event: "*", schema: "public", table: "profiles" },
       () => scheduleRealtimeRefresh("profiles", refreshProfilesFromRealtime),
+    )
+    .on(
+      "postgres_changes",
+      { event: "*", schema: "public", table: "admin_notifications" },
+      handleAdminNotificationRealtime,
     );
   state.liveChannel = channel.subscribe();
 }
@@ -532,6 +695,11 @@ async function applySession(session) {
     renderCartCount();
   }
   updateSessionNavigation();
+  if (isAdmin()) await loadAdminNotifications();
+  else {
+    state.notifications = [];
+    renderNotificationCenter();
+  }
   startAppRealtime();
   if (state.user) syncPaidCheckoutCart({ notify: true });
   if (state.recoveryMode) {
@@ -811,7 +979,15 @@ async function refreshVisibleQuestions(payload = null) {
   bindQuestionActions(product);
 }
 async function deleteQuestion(product, questionId) {
-  if (!confirm("¿Querés eliminar esta pregunta?")) return;
+  if (
+    !(await confirmAction({
+      title: "Eliminar pregunta",
+      message:
+        "La pregunta dejará de verse en la publicación. Esta acción no se puede deshacer.",
+      confirmLabel: "Eliminar pregunta",
+    }))
+  )
+    return;
   const { error } = await supabase
     .from("questions")
     .delete()
@@ -826,13 +1002,16 @@ async function submitQuestion(event, product) {
     text = new FormData(event.target).get("question").trim();
   if (!text) return;
   setBusy(button, true);
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from("questions")
-    .insert({ product_id: product.id, user_id: state.user.id, question: text });
+    .insert({ product_id: product.id, user_id: state.user.id, question: text })
+    .select("id")
+    .single();
   setBusy(button, false);
   if (error) return toast(error.message, "error");
   event.target.reset();
   toast("Pregunta publicada");
+  if (data?.id) await notifyAdminByEmail("question", data.id);
   await refreshVisibleQuestions({ new: { product_id: product.id } });
 }
 async function answerQuestion(product, questionId) {
@@ -1178,7 +1357,7 @@ function renderAccount() {
   }
   section?.classList.add("signed-in");
   title.textContent = "Mi cuenta";
-  state.accountView = "orders";
+  state.accountView = isAdmin() ? "profile" : "orders";
   el.innerHTML = customerDashboard();
   document.querySelector("#logout")?.addEventListener("click", logout);
   document.querySelector("#editAvatar")?.addEventListener("click", openAvatarPicker);
@@ -1186,7 +1365,9 @@ function renderAccount() {
   document.querySelector("#accountBackStore")?.addEventListener("click", () => {
     location.hash = "inicio";
   });
-  if (!isAdmin()) {
+  if (isAdmin()) {
+    openCustomerProfile();
+  } else {
     document.querySelector("#accountOrdersTab")?.addEventListener("click", () => {
       setAccountTab("orders");
       document.querySelector("#accountWorkspace").innerHTML =
@@ -1202,9 +1383,9 @@ function renderAccount() {
 }
 function openAvatarPicker() {
   if (!state.user) return;
-  const currentPreset = state.profile?.avatar_preset || "person";
+  const currentPreset = state.profile?.avatar_preset || "blue";
   openModal(
-    `<button class="modal-close" data-close>×</button><p class="eyebrow orange">TU PERFIL</p><h2>Elegí tu icono</h2><p class="avatar-picker-copy">Podés usar uno de los iconos de Aceros Oeste o subir una foto desde tu dispositivo.</p><form id="avatarForm"><div class="avatar-preset-grid">${avatarPresets.map((preset) => `<label class="avatar-preset-option"><input type="radio" name="avatar_preset" value="${escapeHtml(preset.id)}" ${currentPreset === preset.id && !state.profile?.avatar_url ? "checked" : ""}><span class="user-avatar avatar-${escapeHtml(preset.id)}"><b>${escapeHtml(preset.icon)}</b></span><small>${escapeHtml(preset.label)}</small></label>`).join("")}</div><label class="avatar-upload"><span>Subir una foto propia</span><small>JPG, PNG o WebP · máximo 5 MB</small><input id="avatarPhoto" type="file" accept="image/png,image/jpeg,image/webp"></label><div id="avatarPhotoPreview" class="avatar-photo-preview">${state.profile?.avatar_url ? `<img src="${escapeHtml(state.profile.avatar_url)}" alt="Foto actual"><span>Foto actual</span>` : ""}</div><div class="avatar-form-actions"><button class="btn outline" type="button" data-close>Cancelar</button><button class="btn cta" type="submit">Guardar icono</button></div></form>`,
+    `<button class="modal-close" data-close>×</button><p class="eyebrow orange">TU PERFIL</p><h2>Elegí tu icono</h2><p class="avatar-picker-copy">Elegí un color para tu inicial o subí una foto desde tu dispositivo.</p><form id="avatarForm"><div class="avatar-preset-grid">${avatarPresets.map((preset) => `<label class="avatar-preset-option"><input type="radio" name="avatar_preset" value="${escapeHtml(preset.id)}" ${currentPreset === preset.id && !state.profile?.avatar_url ? "checked" : ""}><span class="user-avatar avatar-${escapeHtml(preset.id)}"><b>${escapeHtml(String(state.profile?.full_name || "U").slice(0, 1).toUpperCase())}</b></span><small>${escapeHtml(preset.label)}</small></label>`).join("")}</div><label class="avatar-upload"><span>Subir una foto propia</span><small>JPG, PNG o WebP · máximo 5 MB</small><input id="avatarPhoto" type="file" accept="image/png,image/jpeg,image/webp"></label><div id="avatarPhotoPreview" class="avatar-photo-preview">${state.profile?.avatar_url ? `<img src="${escapeHtml(state.profile.avatar_url)}" alt="Foto actual"><span>Foto actual</span>` : ""}</div><div class="avatar-form-actions"><button class="btn outline" type="button" data-close>Cancelar</button><button class="btn cta" type="submit">Guardar icono</button></div></form>`,
   );
   const input = document.querySelector("#avatarPhoto");
   input.onchange = () => {
@@ -1226,7 +1407,7 @@ async function saveAvatar(event) {
   const preset =
     new FormData(event.currentTarget).get("avatar_preset") ||
     state.profile?.avatar_preset ||
-    "person";
+    "blue";
   setBusy(button, true, "Guardando…");
   try {
     let avatarUrl = null;
@@ -1401,9 +1582,11 @@ async function logout() {
 }
 function customerDashboard() {
   const name = state.profile?.full_name || state.user.email;
-  if (isAdmin())
-    return `<div class="account-profile-head">${avatarMarkup(state.profile, "user-avatar account-avatar")}<div><span class="session-badge">Administrador</span><h3>${escapeHtml(name)}</h3><p>${escapeHtml(state.user.email)}</p></div><button class="btn outline" id="editAvatar" type="button">Cambiar icono</button></div><a class="btn cta" href="#panel-general">Abrir panel general</a><button class="btn outline account-logout" id="logout">Cerrar sesión</button>`;
-  return `<div class="customer-shell"><aside class="customer-sidebar"><div class="customer-sidebar-user">${avatarMarkup(state.profile, "user-avatar customer-sidebar-avatar")}<div><b>${escapeHtml(name)}</b><small>Mi cuenta</small></div></div><nav aria-label="Panel de cliente"><button class="customer-side-link" id="customerProfileBtn" type="button"><i>●</i><span>Mis datos</span></button><button class="customer-side-link active" id="accountOrdersTab" type="button"><i>▤</i><span>Mis compras</span></button><button class="customer-side-link" id="accountChatTab" type="button"><i>▣</i><span>Chat general</span></button></nav><div class="customer-sidebar-bottom"><button class="customer-side-link" id="accountBackStore" type="button"><i>←</i><span>Volver a la tienda</span></button><button class="customer-side-link" id="logout" type="button"><i>↪</i><span>Cerrar sesión</span></button></div></aside><main class="customer-main"><header class="customer-topbar"><div><small>ACEROS OESTE</small><b>${escapeHtml(name)}</b></div>${avatarMarkup(state.profile, "user-avatar customer-top-avatar")}</header><div id="accountWorkspace" class="customer-workspace"><div id="ordersList"><div class="empty">Cargando compras…</div></div></div></main></div>`;
+  const admin = isAdmin();
+  const navigation = admin
+    ? `<button class="customer-side-link active" id="customerProfileBtn" type="button"><i>●</i><span>Mis datos</span></button><a class="customer-side-link" href="#panel-general"><i>▦</i><span>Panel general</span></a>`
+    : `<button class="customer-side-link" id="customerProfileBtn" type="button"><i>●</i><span>Mis datos</span></button><button class="customer-side-link active" id="accountOrdersTab" type="button"><i>▤</i><span>Mis compras</span></button><button class="customer-side-link" id="accountChatTab" type="button"><i>▣</i><span>Chat general</span></button>`;
+  return `<div class="customer-shell"><aside class="customer-sidebar"><div class="customer-sidebar-user">${avatarMarkup(state.profile, "user-avatar customer-sidebar-avatar")}<div><b>${escapeHtml(name)}</b><small>${admin ? "Administración" : "Mi cuenta"}</small></div></div><nav aria-label="Panel de ${admin ? "administrador" : "cliente"}">${navigation}</nav><div class="customer-sidebar-bottom"><button class="customer-side-link" id="accountBackStore" type="button"><i>←</i><span>Volver a la tienda</span></button><button class="customer-side-link" id="logout" type="button"><i>↪</i><span>Cerrar sesión</span></button></div></aside><main class="customer-main"><header class="customer-topbar"><div><small>${escapeHtml(state.user.email || "")}</small><b>${escapeHtml(name)}</b></div>${avatarMarkup(state.profile, "user-avatar customer-top-avatar")}</header><div id="accountWorkspace" class="customer-workspace">${admin ? "" : '<div id="ordersList"><div class="empty">Cargando compras…</div></div>'}</div></main></div>`;
 }
 function setAccountTab(tab) {
   state.accountView = tab;
@@ -1423,8 +1606,36 @@ function openCustomerProfile() {
   state.activeOrderId = null;
   const workspace = document.querySelector("#accountWorkspace");
   if (!workspace) return;
-  workspace.innerHTML = `<div class="customer-page-head"><div><p class="eyebrow orange">MI PERFIL</p><h1>Mis datos</h1><p>Información de contacto vinculada a tus compras.</p></div></div><section class="customer-profile-panel"><div class="customer-profile-identity">${avatarMarkup(state.profile, "user-avatar account-avatar")}<div><h2>${escapeHtml(state.profile?.full_name || "Cliente")}</h2><span class="session-badge">Cliente</span></div><button class="btn outline" id="editAvatar" type="button">Cambiar icono</button></div><div class="customer-data-grid"><span><small>Nombre</small><b>${escapeHtml(state.profile?.full_name || "Sin completar")}</b></span><span><small>Email</small><b>${escapeHtml(state.user.email || "Sin completar")}</b></span><span><small>Teléfono</small><b>${escapeHtml(state.profile?.phone || "Sin completar")}</b></span></div></section>`;
+  const role = isAdmin() ? "Administrador" : "Cliente";
+  workspace.innerHTML = `<div class="customer-page-head"><div><p class="eyebrow orange">MI PERFIL</p><h1>Mis datos</h1><p>Actualizá el nombre y teléfono visibles en tu cuenta.</p></div></div><section class="customer-profile-panel"><div class="customer-profile-identity">${avatarMarkup(state.profile, "user-avatar account-avatar")}<div><h2>${escapeHtml(state.profile?.full_name || role)}</h2><span class="session-badge">${role}</span><small class="profile-email">${escapeHtml(state.user.email || "")}</small></div><button class="btn outline" id="editAvatar" type="button">Cambiar icono</button></div><form id="profileForm" class="profile-edit-form"><div class="field"><label>Nombre</label><input name="full_name" maxlength="100" autocomplete="name" value="${escapeHtml(state.profile?.full_name || "")}" required></div><div class="field"><label>Email</label><input value="${escapeHtml(state.user.email || "")}" readonly aria-readonly="true"></div><div class="field"><label>Teléfono</label><input name="phone" maxlength="40" autocomplete="tel" value="${escapeHtml(state.profile?.phone || "")}"></div><button class="btn cta" type="submit">Guardar cambios</button></form></section>`;
   document.querySelector("#editAvatar")?.addEventListener("click", openAvatarPicker);
+  document.querySelector("#profileForm")?.addEventListener("submit", saveProfile);
+}
+async function saveProfile(event) {
+  event.preventDefault();
+  const button = event.submitter;
+  const values = Object.fromEntries(new FormData(event.currentTarget));
+  const changes = {
+    full_name: String(values.full_name || "").trim(),
+    phone: String(values.phone || "").trim() || null,
+  };
+  if (!changes.full_name) return toast("Ingresá un nombre.", "error");
+  setBusy(button, true, "Guardando…");
+  const { data, error } = await supabase
+    .from("profiles")
+    .update(changes)
+    .eq("id", state.user.id)
+    .select()
+    .single();
+  if (!error && supabase.auth.updateUser) {
+    await supabase.auth.updateUser({ data: changes }).catch(() => {});
+  }
+  setBusy(button, false);
+  if (error) return toast(error.message || "No se pudo actualizar el perfil.", "error");
+  state.profile = { ...state.profile, ...changes, ...(data || {}) };
+  updateSessionNavigation();
+  renderAccount();
+  toast("Perfil actualizado", "success");
 }
 function orderItemImage(item) {
   if (item?.product_image_url) return item.product_image_url;
@@ -1489,7 +1700,15 @@ async function loadOrders() {
   });
 }
 async function hideCustomerOrder(orderId, button) {
-  if (!confirm("¿Quitar este pedido de tu historial visible?")) return;
+  if (
+    !(await confirmAction({
+      title: "Quitar compra del historial",
+      message:
+        "La compra dejará de mostrarse en tu cuenta, pero se conservará el registro administrativo.",
+      confirmLabel: "Quitar compra",
+    }))
+  )
+    return;
   setBusy(button, true, "Quitando…");
   const { error } = await supabase.rpc("hide_own_order", {
     p_order_id: orderId,
@@ -1584,7 +1803,15 @@ function startChatRealtime(conversationId, refresh) {
     .subscribe();
 }
 async function deleteChatMessage(messageId, conversationId, refresh) {
-  if (!confirm("¿Eliminar este mensaje?")) return;
+  if (
+    !(await confirmAction({
+      title: "Eliminar mensaje",
+      message:
+        "El mensaje se borrará para ambas partes y no podrá recuperarse.",
+      confirmLabel: "Eliminar mensaje",
+    }))
+  )
+    return;
   const { error } = await supabase.rpc("delete_support_message", {
     p_message_id: messageId,
   });
@@ -1594,9 +1821,12 @@ async function deleteChatMessage(messageId, conversationId, refresh) {
 }
 async function deleteSupportConversation(conversationId, owner = "customer") {
   if (
-    !confirm(
-      "¿Eliminar toda la conversación? Se borrarán todos sus mensajes y podrás iniciar un chat nuevo.",
-    )
+    !(await confirmAction({
+      title: "Eliminar conversación",
+      message:
+        "Se borrarán todos sus mensajes para ambas partes. Después podrás iniciar un chat nuevo.",
+      confirmLabel: "Eliminar conversación",
+    }))
   )
     return;
   const previousId = state.activeConversationId;
@@ -1622,15 +1852,28 @@ async function sendChatMessage(event, conversationId, refresh) {
   const body = String(new FormData(form).get("message") || "").trim();
   if (!body) return;
   setBusy(button, true, "Enviando…");
-  const { error } = await supabase.from("support_messages").insert({
-    conversation_id: conversationId,
-    sender_id: state.user.id,
-    body,
-  });
+  const { data, error } = await supabase
+    .from("support_messages")
+    .insert({
+      conversation_id: conversationId,
+      sender_id: state.user.id,
+      body,
+    })
+    .select("id")
+    .single();
   setBusy(button, false);
   if (error) return toast(error.message, "error");
   form.reset();
+  if (!isAdmin() && data?.id) await notifyAdminByEmail("message", data.id);
   await refresh();
+}
+async function notifyAdminByEmail(eventType, recordId) {
+  if (!supabase || !state.user || isAdmin()) return;
+  const { error } = await supabase.functions.invoke("send-admin-notification", {
+    body: { eventType, recordId },
+  });
+  if (error)
+    console.error("La consulta se guardó, pero falló el aviso por email", error);
 }
 async function openCustomerChat() {
   state.accountView = "chat";
@@ -1875,9 +2118,12 @@ function adminUserMarkup(profile) {
 }
 async function deleteAdminUser(userId, userName, button) {
   if (
-    !confirm(
-      `¿Eliminar definitivamente la cuenta de ${userName}? Sus chats se borrarán, pero los pedidos pagados se conservarán como registro.`,
-    )
+    !(await confirmAction({
+      title: `Eliminar cuenta de ${userName}`,
+      message:
+        "Sus chats se borrarán, pero los pedidos pagados se conservarán como registro. Esta acción no se puede deshacer.",
+      confirmLabel: "Eliminar cuenta",
+    }))
   )
     return;
   setBusy(button, true, "Eliminando…");
@@ -1930,7 +2176,15 @@ function openCategories() {
   };
   document.querySelectorAll("[data-delete-category]").forEach((button) => {
     button.onclick = async () => {
-      if (!confirm("Los productos quedarán sin categoría. ¿Continuar?")) return;
+      if (
+        !(await confirmAction({
+          title: "Eliminar categoría",
+          message:
+            "Los productos asociados quedarán sin categoría hasta que los vuelvas a editar.",
+          confirmLabel: "Eliminar categoría",
+        }))
+      )
+        return;
       const { error } = await supabase
         .from("categories")
         .delete()
@@ -1954,7 +2208,15 @@ function openClientManager() {
   document.querySelectorAll("[data-edit-client]").forEach((button) => button.onclick = () => openClientEditor(button.dataset.editClient));
   document.querySelectorAll("[data-delete-client]").forEach((button) => {
     button.onclick = async () => {
-      if (!confirm("¿Eliminar este cliente y su publicación?")) return;
+      if (
+        !(await confirmAction({
+          title: "Eliminar cliente",
+          message:
+            "Se eliminará la publicación del cliente y dejará de verse en la tienda.",
+          confirmLabel: "Eliminar cliente",
+        }))
+      )
+        return;
       const { error } = await supabase.from("client_projects").delete().eq("id", button.dataset.deleteClient);
       if (error) return toast(error.message, "error");
       await loadStoreData(); renderAdminPanel(); openClientManager(); toast("Cliente eliminado", "success");
@@ -2154,7 +2416,15 @@ async function openAdminOrders() {
   );
   document.querySelectorAll("[data-delete-order]").forEach((button) => {
     button.onclick = async () => {
-      if (!confirm("¿Eliminar definitivamente este pedido finalizado?")) return;
+      if (
+        !(await confirmAction({
+          title: "Eliminar pedido finalizado",
+          message:
+            "El pedido se borrará del registro del panel. Esta acción no se puede deshacer.",
+          confirmLabel: "Eliminar pedido",
+        }))
+      )
+        return;
       const { error } = await supabase
         .from("orders")
         .delete()
@@ -2366,7 +2636,15 @@ async function saveProduct(event, current, files) {
   }
 }
 async function deleteProduct(id) {
-  if (!isAdmin() || !confirm("¿Seguro que querés eliminar este producto?"))
+  if (!isAdmin()) return;
+  if (
+    !(await confirmAction({
+      title: "Eliminar producto",
+      message:
+        "La publicación dejará de verse en el catálogo. Esta acción no se puede deshacer.",
+      confirmLabel: "Eliminar producto",
+    }))
+  )
     return;
   const { error } = await supabase.from("products").delete().eq("id", id);
   if (error) return toast(error.message, "error");
@@ -2379,6 +2657,21 @@ async function deleteProduct(id) {
   toast("Producto eliminado", "success");
 }
 
+let pendingModalConfirmation = null;
+function confirmAction({ title, message, confirmLabel = "Eliminar" }) {
+  return new Promise((resolve) => {
+    pendingModalConfirmation = resolve;
+    openModal(
+      `<div class="confirm-dialog"><span class="confirm-icon" aria-hidden="true">!</span><p class="eyebrow orange">CONFIRMACIÓN</p><h2>${escapeHtml(title)}</h2><p>${escapeHtml(message)}</p><div class="confirm-actions"><button class="btn outline" type="button" data-close>Cancelar</button><button class="btn danger" id="confirmActionAccept" type="button">${escapeHtml(confirmLabel)}</button></div></div>`,
+    );
+    document.querySelector("#confirmActionAccept").onclick = () => {
+      const finish = pendingModalConfirmation;
+      pendingModalConfirmation = null;
+      closeModal();
+      finish?.(true);
+    };
+  });
+}
 function openModal(html) {
   document.querySelector("#modalPanel").innerHTML = html;
   document.querySelector("#modal").classList.remove("hidden");
@@ -2388,6 +2681,11 @@ function openModal(html) {
     .forEach((n) => (n.onclick = closeModal));
 }
 function closeModal() {
+  if (pendingModalConfirmation) {
+    const finish = pendingModalConfirmation;
+    pendingModalConfirmation = null;
+    finish(false);
+  }
   document.querySelector("#modal").classList.add("hidden");
   document.body.style.overflow = "";
 }
@@ -2405,6 +2703,21 @@ function bindStaticEvents() {
     .forEach((n) => (n.onclick = closeCart));
   document.querySelector(".menu-btn").onclick = () =>
     document.querySelector(".nav-links").classList.toggle("open");
+  document.querySelector("#notificationBell")?.addEventListener("click", (event) => {
+    event.stopPropagation();
+    const dropdown = document.querySelector("#notificationDropdown");
+    const opening = dropdown?.classList.contains("hidden");
+    dropdown?.classList.toggle("hidden", !opening);
+    event.currentTarget.setAttribute("aria-expanded", String(opening));
+  });
+  document.querySelector("#notificationDropdown")?.addEventListener(
+    "click",
+    (event) => event.stopPropagation(),
+  );
+  document.addEventListener("click", () => {
+    document.querySelector("#notificationDropdown")?.classList.add("hidden");
+    document.querySelector("#notificationBell")?.setAttribute("aria-expanded", "false");
+  });
   document
     .querySelectorAll(".nav-links a")
     .forEach(
@@ -2425,6 +2738,15 @@ function bindStaticEvents() {
 
 async function init() {
   bindStaticEvents();
+  if (
+    "serviceWorker" in navigator &&
+    (location.protocol === "https:" || location.hostname === "localhost")
+  )
+    navigator.serviceWorker.register("/sw.js").catch(console.warn);
+  if (restoreStoreCache()) {
+    renderClients();
+    renderCategories();
+  }
   renderCartCount();
   renderProducts();
   renderAccount();

@@ -43,6 +43,17 @@ const orderChatMigration = readFileSync(
   ),
   "utf8",
 );
+const notificationsMigration = readFileSync(
+  new URL(
+    "supabase/migrations/014_notifications_and_color_avatars.sql",
+    root,
+  ),
+  "utf8",
+);
+const adminNotificationFunction = readFileSync(
+  new URL("supabase/functions/send-admin-notification/index.ts", root),
+  "utf8",
+);
 const rows = {
   categories: [
     {
@@ -134,6 +145,19 @@ const rows = {
   ],
   support_conversations: [],
   support_messages: [],
+  admin_notifications: [
+    {
+      id: "notification-1",
+      type: "question",
+      title: "Nueva pregunta en Mesa inox",
+      body: "¿Se fabrica a medida?",
+      actor_id: "customer-1",
+      product_id: "11111111-1111-4111-8111-111111111111",
+      conversation_id: null,
+      is_read: false,
+      created_at: "2026-08-20T11:00:00Z",
+    },
+  ],
 };
 function query(table) {
   let single = false;
@@ -285,7 +309,7 @@ const executable = html
   .replace('<script src="assets/vendor/supabase.js?v=1"></script>', "")
   .replace('<script src="config.js"></script>', "")
   .replace(
-    '<script src="app.js?v=20"></script>',
+    '<script src="app.js?v=21"></script>',
     `<script>${app.replaceAll("</script>", "<\\/script>")}</script>`,
   );
 const errors = [];
@@ -399,6 +423,16 @@ assert(
   !d.querySelector("#adminNavLink")?.classList.contains("hidden"),
   "El acceso al panel no aparece para el administrador",
 );
+assert(
+  Boolean(d.querySelector("#cuenta .customer-shell .customer-sidebar")) &&
+    Boolean(d.querySelector("#profileForm")),
+  "El administrador no usa el mismo panel de perfil editable",
+);
+assert(
+  !d.querySelector("#adminNotificationCenter")?.classList.contains("hidden") &&
+    d.querySelector("#notificationCount")?.textContent === "1",
+  "El administrador no ve el centro de notificaciones",
+);
 dom.window.location.hash = "#panel-general";
 await new Promise((resolve) => setTimeout(resolve, 20));
 assert(
@@ -446,6 +480,7 @@ assert(
   "El panel no protege al admin o no permite eliminar clientes",
 );
 d.querySelector('[data-delete-user="customer-1"]')?.click();
+d.querySelector("#confirmActionAccept")?.click();
 await new Promise((resolve) => setTimeout(resolve, 40));
 assert(
   invokedFunctions.includes("admin-delete-user"),
@@ -611,8 +646,11 @@ assert(
 );
 d.querySelector("#editAvatar")?.click();
 assert(
-  d.querySelectorAll(".avatar-preset-option").length === 6 &&
-    d.querySelector("#avatarPhoto")?.accept.includes("image/"),
+  d.querySelectorAll(".avatar-preset-option").length === 7 &&
+    d.querySelector("#avatarPhoto")?.accept.includes("image/") &&
+    !d.querySelector("#avatarForm")?.textContent.includes("Aceros Oeste") &&
+    d.querySelector("#avatarForm")?.textContent.includes("Naranja") &&
+    d.querySelector("#avatarForm")?.textContent.includes("Celeste"),
   "No se pueden elegir iconos predeterminados o una foto propia",
 );
 d.querySelector("#modal [data-close]")?.click();
@@ -666,6 +704,11 @@ assert(
   "El cliente no puede eliminar sus mensajes o su chat",
 );
 d.querySelector('[data-delete-chat-message="message-own"]')?.click();
+assert(
+  Boolean(d.querySelector(".confirm-dialog #confirmActionAccept")),
+  "El borrado no usa una confirmación visual profesional",
+);
+d.querySelector("#confirmActionAccept")?.click();
 await new Promise((resolve) => setTimeout(resolve, 40));
 assert(
   !d.querySelector("#customerChatMessages")?.textContent.includes(
@@ -762,6 +805,31 @@ assert(
     app.includes('hash.split("?")[0]'),
   "Los avatares o la limpieza segura del carrito no están completos",
 );
+assert(
+  notificationsMigration.includes("create table if not exists public.admin_notifications") &&
+    notificationsMigration.includes("questions_notify_admin") &&
+    notificationsMigration.includes("support_messages_notify_admin") &&
+    notificationsMigration.includes("set full_name = 'Aceros Oeste'") &&
+    notificationsMigration.includes("'orange'") &&
+    notificationsMigration.includes("'sky'"),
+  "La migración de notificaciones, nombre administrativo o colores está incompleta",
+);
+assert(
+  adminNotificationFunction.includes("ADMIN_EMAIL") &&
+    adminNotificationFunction.includes("sendTransactionalEmail") &&
+    adminNotificationFunction.includes('eventType === "question"') &&
+    adminNotificationFunction.includes("support_messages") &&
+    app.includes('notifyAdminByEmail("question"') &&
+    app.includes('notifyAdminByEmail("message"'),
+  "Los avisos por email de preguntas y mensajes no están completos",
+);
+assert(
+  app.includes("restoreStoreCache") &&
+    app.includes("persistStoreCache") &&
+    app.includes("Conservamos el catálogo completo") &&
+    !app.includes("Mostramos productos de referencia"),
+  "El catálogo todavía puede reemplazarse por cuatro productos de muestra",
+);
 await authListener?.("SIGNED_OUT", null);
 await new Promise((resolve) => setTimeout(resolve, 30));
 activeSession = {
@@ -814,5 +882,5 @@ if (errors.length) {
   process.exit(1);
 }
 console.log(
-  "QA OK: avatar seguro, panel de cliente, fotos, estados y chat por pedido",
+  "QA OK: perfiles, catálogo completo, notificaciones, emails y confirmaciones",
 );
