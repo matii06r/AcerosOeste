@@ -53,12 +53,23 @@ npx supabase functions deploy mp-webhook --project-ref dvisdjvzwbfklrpzsuhe --no
 npx supabase functions deploy send-order-email --project-ref dvisdjvzwbfklrpzsuhe --no-verify-jwt
 ```
 
-`db push` aplicará solamente las migraciones pendientes, incluidas `007`, `008`
-y `009_realtime_sync_and_chat_deletion.sql`. La migración `008` completa el email de
+`db push` aplicará solamente las migraciones pendientes, incluidas `007`, `008`,
+`009` y `010_hide_unpaid_orders.sql`. La migración `008` completa el email de
 las cuentas existentes, guarda el de los nuevos registros y habilita la lista
 de usuarios del panel sin exponer esos datos a visitantes ni a otros clientes.
 La migración `009` activa la sincronización en vivo de pedidos, preguntas, chat,
 catálogo y usuarios, y agrega el borrado seguro de mensajes y conversaciones.
+La migración `010` oculta los intentos de checkout abandonados. Un pedido recién
+aparece para el cliente y el administrador cuando el webhook acredita el pago
+total o la seña configurada.
+
+Después de aplicar `010`, desplegá la función que inicia el checkout:
+
+```powershell
+npx supabase functions deploy mp-create-preference --project-ref dvisdjvzwbfklrpzsuhe --no-verify-jwt
+```
+
+El orden es importante: primero `db push` y después el despliegue de la función.
 Si una ejecución anterior de `001` quedó a medias, la migración puede reanudarse
 sin fallar por políticas ya existentes.
 
@@ -208,3 +219,12 @@ guardado en un carrito, la web lo quita al recargar y corrige también el contad
 El checkout vuelve a validar el carrito antes de llamar a Mercado Pago.
 
 La clave publicable de `config.js` está diseñada para estar en el navegador. Nunca agregues `MP_ACCESS_TOKEN`, `MP_WEBHOOK_SECRET` ni `SUPABASE_SERVICE_ROLE_KEY` a archivos del sitio o a Vercel.
+
+## Avisos de Deno en Visual Studio Code
+
+La carpeta `.vscode` recomienda la extensión oficial **Deno** y la activa sólo
+dentro de `supabase/functions`. Si VS Code todavía muestra subrayados en los
+imports `https://esm.sh`, instalá la extensión recomendada y ejecutá
+**Developer: Reload Window** desde la paleta de comandos. Esos imports son
+propios de las Edge Functions y no se resuelven con el servidor TypeScript
+normal de VS Code.

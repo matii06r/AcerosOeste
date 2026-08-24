@@ -95,7 +95,7 @@ const state = {
   categories: [],
   questions: {},
   cart: safeRead("ao_cart_guest", []),
-  settings: { deposit_percentage: 30, freight_whatsapp: "5491134322199" },
+  settings: { deposit_percentage: 50, freight_whatsapp: "5491134322199" },
   user: null,
   profile: null,
   filter: "Todos",
@@ -537,7 +537,7 @@ function showClientPage(clientId) {
   showStandalonePage("#cliente-detalle");
   const page = document.querySelector("#clientDetailContent");
   const logo = client.logo_url;
-  page.innerHTML = `<div class="client-detail-head">${logo ? `<img src="${escapeHtml(logo)}" alt="${escapeHtml(client.name)}">` : `<span>${escapeHtml(client.name.slice(0, 2).toUpperCase())}</span>`}<div><p class="eyebrow orange">${escapeHtml(client.category || "CLIENTE")}</p><h1>${escapeHtml(client.name)}</h1><p>${escapeHtml(client.description || "Equipamiento fabricado a medida por Aceros Oeste.")}</p></div></div><div class="client-detail-gallery">${client.images?.length ? client.images.map((url, index) => `<button type="button" data-client-detail-photo="${escapeHtml(url)}"><img src="${escapeHtml(url)}" alt="Trabajo realizado para ${escapeHtml(client.name)}, foto ${index + 1}" loading="lazy"></button>`).join("") : '<div class="empty">Próximamente publicaremos las fotos de este trabajo.</div>'}</div>`;
+  page.innerHTML = `<div class="client-detail-head"><p class="eyebrow orange">${escapeHtml(client.category || "CLIENTE")}</p><div class="client-detail-logo">${logo ? `<img src="${escapeHtml(logo)}" alt="${escapeHtml(client.name)}">` : `<span>${escapeHtml(client.name.slice(0, 2).toUpperCase())}</span>`}</div><h1>${escapeHtml(client.name)}</h1></div><section class="client-work-layout"><div class="client-work-copy"><p class="eyebrow orange">TRABAJO REALIZADO</p><h2>Lo que hicimos para ${escapeHtml(client.name)}</h2><p>${escapeHtml(client.description || "Equipamiento fabricado a medida por Aceros Oeste.")}</p></div><div class="client-detail-gallery">${client.images?.length ? client.images.map((url, index) => `<button type="button" data-client-detail-photo="${escapeHtml(url)}"><img src="${escapeHtml(url)}" alt="Trabajo realizado para ${escapeHtml(client.name)}, foto ${index + 1}" loading="lazy"></button>`).join("") : '<div class="empty">Próximamente publicaremos las fotos de este trabajo.</div>'}</div></section>`;
   document.querySelectorAll("[data-client-detail-photo]").forEach((button) => {
     button.onclick = () => openModal(`<button class="modal-close" data-close>×</button><p class="eyebrow orange">TRABAJO REALIZADO</p><h2>${escapeHtml(client.name)}</h2><img class="client-photo-large" src="${escapeHtml(button.dataset.clientDetailPhoto)}" alt="Trabajo realizado para ${escapeHtml(client.name)}">`);
   });
@@ -858,7 +858,7 @@ function renderCart() {
     )
     .join("");
   const total = items.reduce((sum, i) => sum + i.product.price * i.qty, 0),
-    percentage = Number(state.settings.deposit_percentage || 30),
+    percentage = Number(state.settings.deposit_percentage || 50),
     deposit = (total * percentage) / 100;
   document.querySelector("#cartSummary").innerHTML =
     `<div class="totals"><div class="total-row"><span>Subtotal</span><b>${money(total)}</b></div><div class="total-row grand"><span>Total</span><span>${money(total)}</span></div><div class="pay-options"><label class="pay-option active"><input type="radio" name="paymentType" value="full" checked> <b>Pagar total</b><br>${money(total)}</label><label class="pay-option"><input type="radio" name="paymentType" value="deposit"> <b>Seña ${percentage}%</b><br>${money(deposit)}</label></div><div class="stack"><button class="btn secondary" id="mpBtn">Pagar con Mercado Pago</button><button class="btn cta" id="freightBtn">Coordinar compra y flete</button></div></div>`;
@@ -1228,6 +1228,7 @@ async function loadOrders() {
   const { data, error } = await supabase
     .from("orders")
     .select("*, order_items(*)")
+    .neq("status", "awaiting_payment")
     .order("created_at", { ascending: false });
   const el = document.querySelector("#ordersList");
   if (!el) return;
@@ -1431,6 +1432,7 @@ function statusLabel(status) {
   return (
     {
       pending: "Pendiente",
+      awaiting_payment: "Esperando pago",
       deposit_paid: "Seña pagada",
       paid: "Pagado",
       in_transit: "En camino",
@@ -1454,7 +1456,7 @@ function renderAdminPanel() {
   bindAdminDashboard();
 }
 function adminDashboard() {
-  return `<div class="admin-metrics"><div class="metric"><b>${state.products.length}</b><small>Productos publicados</small></div><div class="metric"><b>${state.settings.deposit_percentage || 30}%</b><small>Seña configurada</small></div></div><div class="admin-tabs"><button class="btn cta" id="addProduct">+ Crear producto</button><button class="btn secondary" id="productsBtn">Productos</button><button class="btn secondary" id="usersBtn">Usuarios</button><button class="btn secondary" id="categoriesBtn">Categorías</button><button class="btn secondary" id="clientsBtn">Clientes y trabajos</button><button class="btn secondary" id="chatsBtn">Chats</button><button class="btn secondary" id="settingsBtn">Configuración</button><button class="btn secondary" id="ordersBtn">Pedidos</button><button class="btn outline" id="logout">Cerrar sesión</button></div><div id="adminWorkspace">${adminProductsMarkup()}</div>`;
+  return `<div class="admin-metrics"><div class="metric"><b>${state.products.length}</b><small>Productos publicados</small></div><div class="metric"><b>${state.settings.deposit_percentage || 50}%</b><small>Seña configurada</small></div></div><div class="admin-tabs"><button class="btn cta" id="addProduct">+ Crear producto</button><button class="btn secondary" id="productsBtn">Productos</button><button class="btn secondary" id="usersBtn">Usuarios</button><button class="btn secondary" id="categoriesBtn">Categorías</button><button class="btn secondary" id="clientsBtn">Clientes y trabajos</button><button class="btn secondary" id="chatsBtn">Chats</button><button class="btn secondary" id="settingsBtn">Configuración</button><button class="btn secondary" id="ordersBtn">Pedidos</button><button class="btn outline" id="logout">Cerrar sesión</button></div><div id="adminWorkspace">${adminProductsMarkup()}</div>`;
 }
 function adminProductsMarkup() {
   return `<div class="admin-section-title"><div><h3>Productos publicados</h3><p>Editá o abrí cualquier ficha sin salir del panel.</p></div></div>${state.products.length ? state.products.map((product) => `<div class="admin-row"><b>${escapeHtml(product.name)}</b><span>${money(product.price)}</span><span>Stock: ${product.stock}</span><div class="admin-row-actions"><a class="remove" href="#producto/${encodeURIComponent(product.slug)}">Ver</a><button class="remove" data-edit="${product.id}">Editar</button></div></div>`).join("") : '<div class="notice">Todavía no hay productos publicados.</div>'}`;
@@ -1637,7 +1639,7 @@ function openSettings() {
   state.adminView = "settings";
   state.activeConversationId = null;
   const ws = document.querySelector("#adminWorkspace");
-  ws.innerHTML = `<h3>Configuración de la tienda</h3><form id="settingsForm" class="form-grid"><div class="field"><label>Porcentaje de seña</label><input name="deposit_percentage" type="number" min="1" max="100" value="${state.settings.deposit_percentage || 30}"></div><div class="field"><label>WhatsApp de ventas</label><input name="sales_whatsapp" value="${escapeHtml(state.settings.sales_whatsapp || "")}"></div><div class="field full"><label>Email de contacto</label><input name="contact_email" type="email" value="${escapeHtml(state.settings.contact_email || "")}"></div><button class="btn secondary">Guardar</button></form>`;
+  ws.innerHTML = `<h3>Configuración de la tienda</h3><form id="settingsForm" class="form-grid"><div class="field"><label>Porcentaje de seña</label><input name="deposit_percentage" type="number" min="1" max="100" value="${state.settings.deposit_percentage || 50}"></div><div class="field"><label>WhatsApp de ventas</label><input name="sales_whatsapp" value="${escapeHtml(state.settings.sales_whatsapp || "")}"></div><div class="field full"><label>Email de contacto</label><input name="contact_email" type="email" value="${escapeHtml(state.settings.contact_email || "")}"></div><button class="btn secondary">Guardar</button></form>`;
   document.querySelector("#settingsForm").onsubmit = async (e) => {
     e.preventDefault();
     const button = e.submitter,
@@ -1730,6 +1732,7 @@ async function openAdminOrders() {
   const { data, error } = await supabase
     .from("orders")
     .select("*, order_items(*)")
+    .neq("status", "awaiting_payment")
     .order("created_at", { ascending: false })
     .limit(100);
   if (error) {

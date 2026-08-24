@@ -1,7 +1,8 @@
+// @ts-ignore -- Las Edge Functions resuelven imports URL mediante Deno.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { orderEmailHtml, sendTransactionalEmail } from "../_shared/email.ts";
 
-Deno.serve(async (req) => {
+Deno.serve(async (req: Request) => {
   const origin = req.headers.get("origin") || "";
   let siteOrigin = origin;
   try {
