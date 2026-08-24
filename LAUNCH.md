@@ -55,7 +55,8 @@ npx supabase functions deploy admin-delete-user --project-ref dvisdjvzwbfklrpzsu
 ```
 
 `db push` aplicará solamente las migraciones pendientes, incluidas `007`, `008`,
-`009`, `010`, `011_remove_pending_orders.sql` y `012_profile_avatars.sql`. La migración `008` completa el email de
+`009`, `010`, `011_remove_pending_orders.sql`, `012_profile_avatars.sql` y
+`013_order_chat_and_profile_permissions.sql`. La migración `008` completa el email de
 las cuentas existentes, guarda el de los nuevos registros y habilita la lista
 de usuarios del panel sin exponer esos datos a visitantes ni a otros clientes.
 La migración `009` activa la sincronización en vivo de pedidos, preguntas, chat,
@@ -67,8 +68,12 @@ La migración `011` convierte cualquier pedido viejo que todavía figure como
 **Pendiente** en un intento oculto y elimina Pendiente de los estados permitidos.
 La migración `012` agrega los iconos predeterminados y el bucket seguro donde
 cada usuario puede subir únicamente su propia foto de perfil.
+La migración `013` corrige el permiso de actualización del avatar sin permitir
+que un cliente cambie su rol, conserva una foto del producto dentro de cada
+compra y crea un chat privado independiente por pedido.
 
-Después de aplicar `010`, desplegá la función que inicia el checkout:
+Después de aplicar `013`, desplegá la función que inicia el checkout para que
+las compras nuevas guarden también la foto del producto:
 
 ```powershell
 npx supabase functions deploy mp-create-preference --project-ref dvisdjvzwbfklrpzsuhe --no-verify-jwt

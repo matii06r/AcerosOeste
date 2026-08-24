@@ -36,6 +36,13 @@ const avatarMigration = readFileSync(
   new URL("supabase/migrations/012_profile_avatars.sql", root),
   "utf8",
 );
+const orderChatMigration = readFileSync(
+  new URL(
+    "supabase/migrations/013_order_chat_and_profile_permissions.sql",
+    root,
+  ),
+  "utf8",
+);
 const rows = {
   categories: [
     {
@@ -111,7 +118,18 @@ const rows = {
       subtotal: 100000,
       hidden_by_customer: false,
       created_at: "2026-08-18T10:00:00Z",
-      order_items: [{ quantity: 1, product_name: "Mesa inox" }],
+      payment_type: "full",
+      amount_to_pay: 100000,
+      order_items: [
+        {
+          product_id: "11111111-1111-4111-8111-111111111111",
+          quantity: 1,
+          product_name: "Mesa inox",
+          unit_price: 100000,
+          subtotal: 100000,
+          product_image_url: "https://example.test/product.jpg",
+        },
+      ],
     },
   ],
   support_conversations: [],
@@ -239,6 +257,27 @@ const client = {
         (message) => message.conversation_id !== id,
       );
     }
+    if (name === "get_or_create_order_conversation") {
+      let conversation = Array.isArray(rows.support_conversations)
+        ? rows.support_conversations.find(
+            (item) => item.order_id === values.p_order_id,
+          )
+        : rows.support_conversations?.order_id === values.p_order_id
+          ? rows.support_conversations
+          : null;
+      if (!conversation) {
+        conversation = {
+          id: `order-chat-${values.p_order_id}`,
+          user_id: "customer-1",
+          order_id: values.p_order_id,
+          status: "open",
+        };
+        rows.support_conversations = Array.isArray(rows.support_conversations)
+          ? [...rows.support_conversations, conversation]
+          : [conversation];
+      }
+      return { data: conversation, error: null };
+    }
     return { data: null, error: null };
   },
 };
@@ -246,7 +285,7 @@ const executable = html
   .replace('<script src="assets/vendor/supabase.js?v=1"></script>', "")
   .replace('<script src="config.js"></script>', "")
   .replace(
-    '<script src="app.js?v=19"></script>',
+    '<script src="app.js?v=20"></script>',
     `<script>${app.replaceAll("</script>", "<\\/script>")}</script>`,
   );
 const errors = [];
@@ -315,6 +354,10 @@ assert(
 assert(
   Boolean(d.querySelector('.whatsapp-float[href*="5491134322199"]')),
   "Falta el acceso flotante a WhatsApp",
+);
+assert(
+  !d.querySelector(".whatsapp-float span"),
+  "El acceso flotante todavía muestra el texto WhatsApp",
 );
 assert(
   !d.querySelector("#cuenta")?.textContent.includes("siempre segura"),
@@ -509,6 +552,21 @@ dom.window.location.hash = "#panel-general";
 await new Promise((resolve) => setTimeout(resolve, 30));
 d.querySelector("#ordersBtn")?.click();
 await new Promise((resolve) => setTimeout(resolve, 30));
+assert(
+  Boolean(d.querySelector('.admin-order-product img[src*="product.jpg"]')) &&
+    Boolean(d.querySelector(".admin-order-avatar")) &&
+    Boolean(d.querySelector('[data-admin-order-chat="order-1"]')),
+  "Pedidos del administrador no muestra producto, cliente o chat",
+);
+d.querySelector('[data-admin-order-chat="order-1"]')?.click();
+await new Promise((resolve) => setTimeout(resolve, 40));
+assert(
+  Boolean(d.querySelector("#adminChatForm")) &&
+    d.querySelector("#adminWorkspace")?.textContent.includes("Mesa inox"),
+  "El administrador no puede abrir el chat específico del pedido",
+);
+d.querySelector("#backToAdminChats")?.click();
+await new Promise((resolve) => setTimeout(resolve, 30));
 rows.orders[0].status = "cancelled";
 emitRealtime("orders", {
   eventType: "UPDATE",
@@ -540,6 +598,13 @@ dom.window.location.hash = "#cuenta";
 await new Promise((resolve) => setTimeout(resolve, 30));
 assert(Boolean(d.querySelector("#accountChatTab")), "Falta el chat del cliente");
 assert(
+  Boolean(d.querySelector(".customer-shell .customer-sidebar")) &&
+    Boolean(d.querySelector("#customerProfileBtn")) &&
+    Boolean(d.querySelector("#accountBackStore")),
+  "La cuenta no usa el panel completo de cliente",
+);
+d.querySelector("#customerProfileBtn")?.click();
+assert(
   Boolean(d.querySelector("#editAvatar")) &&
     Boolean(d.querySelector(".account-avatar")),
   "La cuenta no muestra el avatar configurable",
@@ -559,17 +624,22 @@ assert(
 rows.orders[0].status = "paid";
 d.querySelector("#accountOrdersTab")?.click();
 await new Promise((resolve) => setTimeout(resolve, 30));
-const consultationLink = d.querySelector(
-  '.customer-order-actions a[href*="wa.me"]',
-);
-const consultationText = consultationLink
-  ? new URL(consultationLink.href).searchParams.get("text") || ""
-  : "";
 assert(
-  consultationText.includes("1× Mesa inox") &&
-    !consultationText.toUpperCase().includes("ORDER-1"),
-  "La consulta del cliente no usa el nombre y la cantidad del producto",
+  Boolean(d.querySelector('.purchase-product img[src*="product.jpg"]')) &&
+    d.querySelector("#ordersList")?.textContent.includes("1× Mesa inox") &&
+    Boolean(d.querySelector(".order-progress")),
+  "Mis compras no muestra fotos, productos y seguimiento",
 );
+const orderChatButton = d.querySelector('[data-customer-order-chat="order-1"]');
+orderChatButton?.click();
+await new Promise((resolve) => setTimeout(resolve, 40));
+assert(
+  Boolean(d.querySelector("#customerOrderChatForm")) &&
+    d.querySelector(".order-chat-context")?.textContent.includes("Mesa inox"),
+  "El cliente no puede abrir el chat específico de su compra",
+);
+d.querySelector("#backToCustomerOrders")?.click();
+await new Promise((resolve) => setTimeout(resolve, 30));
 rows.support_conversations = {
   id: "conversation-1",
   user_id: "customer-1",
@@ -629,8 +699,17 @@ assert(
   paymentFunction.includes('MP_ENVIRONMENT') &&
     paymentFunction.includes('user_id: user.id') &&
     paymentFunction.includes('status: "awaiting_payment"') &&
+    paymentFunction.includes("product_image_url") &&
     !paymentFunction.includes('sandbox_init_point'),
   "El pago no quedó protegido para producción y usuarios autenticados",
+);
+assert(
+  orderChatMigration.includes(
+    "grant update (full_name, phone, avatar_url, avatar_preset)",
+  ) &&
+    orderChatMigration.includes("get_or_create_order_conversation") &&
+    orderChatMigration.includes("product_image_url"),
+  "La migración no corrige permisos de avatar, fotos y chat por pedido",
 );
 assert(
   customerMigration.includes("cancel_own_order") &&
@@ -735,5 +814,5 @@ if (errors.length) {
   process.exit(1);
 }
 console.log(
-  "QA OK: carrito pospago, avatares, galería y nuevo panel administrativo",
+  "QA OK: avatar seguro, panel de cliente, fotos, estados y chat por pedido",
 );

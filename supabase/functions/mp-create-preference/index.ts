@@ -43,7 +43,7 @@ Deno.serve(async (req: Request) => {
     const ids = items.map((i: { productId: string }) => i.productId);
     const { data: products, error } = await supabase
       .from("products")
-      .select("id,name,price,stock_quantity")
+      .select("id,name,price,stock_quantity,images")
       .in("id", ids)
       .eq("is_active", true);
     if (error) throw error;
@@ -88,6 +88,8 @@ Deno.serve(async (req: Request) => {
         order_id: order.id,
         product_id: x.id,
         product_name: x.name,
+        product_image_url:
+          Array.isArray(x.images) && x.images.length ? x.images[0] : null,
         unit_price: x.price,
         quantity: x.quantity,
         subtotal: x.subtotal,

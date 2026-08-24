@@ -119,6 +119,7 @@ const state = {
   verifyingCheckout: false,
   activeConversationId: null,
   activeConversationName: "",
+  activeOrderId: null,
 };
 const realtimeTimers = new Map();
 const isAdmin = () => state.profile?.role === "admin";
@@ -425,7 +426,12 @@ function handleConversationRealtime(payload) {
   ) {
     stopChatRealtime();
     state.activeConversationId = null;
-    if (isAdmin()) scheduleRealtimeRefresh("deleted-admin-chat", openAdminChats);
+    if (isAdmin() && state.adminView === "order-conversation")
+      scheduleRealtimeRefresh("deleted-admin-order-chat", openAdminOrders);
+    else if (isAdmin())
+      scheduleRealtimeRefresh("deleted-admin-chat", openAdminChats);
+    else if (hash === "cuenta" && state.accountView === "order-chat")
+      scheduleRealtimeRefresh("deleted-customer-order-chat", loadOrders);
     else if (hash === "cuenta" && state.accountView === "chat")
       scheduleRealtimeRefresh("deleted-customer-chat", openCustomerChat);
   }
@@ -1159,8 +1165,10 @@ function openFreight(total) {
 
 function renderAccount() {
   const el = document.querySelector("#accountContent"),
-    title = document.querySelector("#accountTitle");
+    title = document.querySelector("#accountTitle"),
+    section = document.querySelector("#cuenta");
   if (!state.user) {
+    section?.classList.remove("signed-in");
     title.textContent = "Ingresá a tu cuenta";
     el.innerHTML = `<div class="account-switch"><button class="chip active" type="button">Iniciar sesión</button><button class="chip" id="showRegister" type="button">Crear cuenta</button></div><form id="loginForm" class="auth-form"><div class="field"><label>Email</label><input name="email" type="email" autocomplete="email" placeholder="nombre@email.com" required></div><div class="field"><label>Contraseña</label><input name="password" type="password" autocomplete="current-password" minlength="6" placeholder="Tu contraseña" required></div><button class="btn cta full">Ingresar</button><button class="text-button" id="forgotPassword" type="button">¿Olvidaste tu contraseña?</button></form><p class="auth-help">Si acabás de registrarte, confirmá primero el email que te envió Acerosoeste.</p>`;
     document.querySelector("#loginForm").onsubmit = login;
@@ -1168,11 +1176,16 @@ function renderAccount() {
     document.querySelector("#forgotPassword").onclick = renderRecovery;
     return;
   }
+  section?.classList.add("signed-in");
   title.textContent = "Mi cuenta";
   state.accountView = "orders";
   el.innerHTML = customerDashboard();
   document.querySelector("#logout")?.addEventListener("click", logout);
   document.querySelector("#editAvatar")?.addEventListener("click", openAvatarPicker);
+  document.querySelector("#customerProfileBtn")?.addEventListener("click", openCustomerProfile);
+  document.querySelector("#accountBackStore")?.addEventListener("click", () => {
+    location.hash = "inicio";
+  });
   if (!isAdmin()) {
     document.querySelector("#accountOrdersTab")?.addEventListener("click", () => {
       setAccountTab("orders");
@@ -1387,24 +1400,59 @@ async function logout() {
   toast("Sesión cerrada");
 }
 function customerDashboard() {
-  return `<div class="account-profile-head">${avatarMarkup(state.profile, "user-avatar account-avatar")}<div><span class="session-badge">${isAdmin() ? "Administrador" : "Cliente"}</span><h3>Hola, ${escapeHtml(state.profile?.full_name || state.user.email)}</h3><p>${escapeHtml(state.user.email)}</p></div><button class="btn outline" id="editAvatar" type="button">Cambiar icono</button></div>${isAdmin() ? '<a class="btn cta" href="#panel-general">Abrir panel general</a>' : '<div class="account-tabs"><button class="btn secondary active" id="accountOrdersTab" type="button">Mis pedidos</button><button class="btn secondary" id="accountChatTab" type="button">Chat privado</button></div><div id="accountWorkspace"><div id="ordersList"><div class="empty">Cargando pedidos…</div></div></div>'}<button class="btn outline account-logout" id="logout">Cerrar sesión</button>`;
+  const name = state.profile?.full_name || state.user.email;
+  if (isAdmin())
+    return `<div class="account-profile-head">${avatarMarkup(state.profile, "user-avatar account-avatar")}<div><span class="session-badge">Administrador</span><h3>${escapeHtml(name)}</h3><p>${escapeHtml(state.user.email)}</p></div><button class="btn outline" id="editAvatar" type="button">Cambiar icono</button></div><a class="btn cta" href="#panel-general">Abrir panel general</a><button class="btn outline account-logout" id="logout">Cerrar sesión</button>`;
+  return `<div class="customer-shell"><aside class="customer-sidebar"><div class="customer-sidebar-user">${avatarMarkup(state.profile, "user-avatar customer-sidebar-avatar")}<div><b>${escapeHtml(name)}</b><small>Mi cuenta</small></div></div><nav aria-label="Panel de cliente"><button class="customer-side-link" id="customerProfileBtn" type="button"><i>●</i><span>Mis datos</span></button><button class="customer-side-link active" id="accountOrdersTab" type="button"><i>▤</i><span>Mis compras</span></button><button class="customer-side-link" id="accountChatTab" type="button"><i>▣</i><span>Chat general</span></button></nav><div class="customer-sidebar-bottom"><button class="customer-side-link" id="accountBackStore" type="button"><i>←</i><span>Volver a la tienda</span></button><button class="customer-side-link" id="logout" type="button"><i>↪</i><span>Cerrar sesión</span></button></div></aside><main class="customer-main"><header class="customer-topbar"><div><small>ACEROS OESTE</small><b>${escapeHtml(name)}</b></div>${avatarMarkup(state.profile, "user-avatar customer-top-avatar")}</header><div id="accountWorkspace" class="customer-workspace"><div id="ordersList"><div class="empty">Cargando compras…</div></div></div></main></div>`;
 }
 function setAccountTab(tab) {
   state.accountView = tab;
-  if (tab === "orders") stopChatRealtime();
+  if (!["chat", "order-chat"].includes(tab)) stopChatRealtime();
+  document
+    .querySelector("#customerProfileBtn")
+    ?.classList.toggle("active", tab === "profile");
   document
     .querySelector("#accountOrdersTab")
-    ?.classList.toggle("active", tab === "orders");
+    ?.classList.toggle("active", ["orders", "order-chat"].includes(tab));
   document
     .querySelector("#accountChatTab")
     ?.classList.toggle("active", tab === "chat");
 }
-function customerOrderConsultation(order) {
-  const productLines = (order.order_items || []).map(
-    (item) =>
-      `• ${Math.max(1, Number(item.quantity) || 1)}× ${item.product_name || "Producto"}`,
+function openCustomerProfile() {
+  setAccountTab("profile");
+  state.activeOrderId = null;
+  const workspace = document.querySelector("#accountWorkspace");
+  if (!workspace) return;
+  workspace.innerHTML = `<div class="customer-page-head"><div><p class="eyebrow orange">MI PERFIL</p><h1>Mis datos</h1><p>Información de contacto vinculada a tus compras.</p></div></div><section class="customer-profile-panel"><div class="customer-profile-identity">${avatarMarkup(state.profile, "user-avatar account-avatar")}<div><h2>${escapeHtml(state.profile?.full_name || "Cliente")}</h2><span class="session-badge">Cliente</span></div><button class="btn outline" id="editAvatar" type="button">Cambiar icono</button></div><div class="customer-data-grid"><span><small>Nombre</small><b>${escapeHtml(state.profile?.full_name || "Sin completar")}</b></span><span><small>Email</small><b>${escapeHtml(state.user.email || "Sin completar")}</b></span><span><small>Teléfono</small><b>${escapeHtml(state.profile?.phone || "Sin completar")}</b></span></div></section>`;
+  document.querySelector("#editAvatar")?.addEventListener("click", openAvatarPicker);
+}
+function orderItemImage(item) {
+  if (item?.product_image_url) return item.product_image_url;
+  const product = state.products.find(
+    (candidate) => String(candidate.id) === String(item?.product_id),
   );
-  return `Hola Aceros Oeste, quiero consultar por mi pedido:\n\n${productLines.length ? productLines.join("\n") : "Productos de mi compra"}`;
+  const media = product?.images?.find((url) => !isVideoUrl(url));
+  return media || "";
+}
+function orderProductsLabel(order) {
+  return (order.order_items || [])
+    .map((item) => `${Math.max(1, Number(item.quantity) || 1)}× ${item.product_name || "Producto"}`)
+    .join(" · ");
+}
+function orderProgressMarkup(status) {
+  const step =
+    { deposit_paid: 1, paid: 1, in_transit: 2, fulfilled: 3 }[status] || 0;
+  const cancelled = status === "cancelled";
+  return `<div class="order-progress ${cancelled ? "cancelled" : ""}"><span class="${step >= 1 && !cancelled ? "done" : ""}"><i>✓</i><b>${cancelled ? "Compra cancelada" : "Pago acreditado"}</b></span><span class="${step >= 2 ? "done" : ""}"><i>2</i><b>En camino</b></span><span class="${step >= 3 ? "done" : ""}"><i>3</i><b>Entregado</b></span></div>`;
+}
+function orderPaymentSummary(order) {
+  const paid = Number(order.amount_to_pay) || Number(order.subtotal) || 0;
+  const balance = Math.max(0, Number(order.subtotal || 0) - paid);
+  return `<div class="order-payment-summary"><span><small>Total</small><b>${money(order.subtotal)}</b></span><span><small>${order.payment_type === "deposit" ? "Seña acreditada" : "Pago acreditado"}</small><b>${money(paid)}</b></span>${balance ? `<span class="pending"><small>Saldo pendiente</small><b>${money(balance)}</b></span>` : ""}</div>`;
+}
+function customerOrderMarkup(order) {
+  const items = order.order_items || [];
+  return `<article class="purchase-card" data-customer-order="${order.id}"><header><div><small>${new Date(order.created_at).toLocaleDateString("es-AR")}</small><h2>${escapeHtml(orderProductsLabel(order) || "Compra en Aceros Oeste")}</h2></div><span class="order-status status-${escapeHtml(order.status)}">${statusLabel(order.status)}</span></header><div class="purchase-products">${items.map((item) => { const image = orderItemImage(item); return `<div class="purchase-product"><div class="purchase-product-image">${image ? `<img src="${escapeHtml(image)}" alt="${escapeHtml(item.product_name || "Producto")}">` : `<span>${escapeHtml(String(item.product_name || "P").slice(0, 1))}</span>`}</div><div><b>${escapeHtml(item.product_name || "Producto")}</b><small>${Math.max(1, Number(item.quantity) || 1)} unidad${Number(item.quantity) === 1 ? "" : "es"} · ${money(item.unit_price || item.subtotal)}</small></div></div>`; }).join("")}</div>${orderProgressMarkup(order.status)}${orderPaymentSummary(order)}<div class="purchase-actions">${!["cancelled", "fulfilled"].includes(order.status) ? `<button class="btn cta" data-customer-order-chat="${order.id}" type="button">Hablar sobre esta compra</button>` : ""}${["cancelled", "fulfilled"].includes(order.status) ? `<button class="btn outline" data-hide-order="${order.id}" type="button">Quitar de mi cuenta</button>` : ""}</div></article>`;
 }
 async function loadOrders() {
   if (!state.user || isAdmin()) return;
@@ -1426,16 +1474,18 @@ async function loadOrders() {
         order.status,
       ),
   );
-  el.innerHTML = visibleOrders.length
-    ? visibleOrders
-        .map(
-          (order) =>
-            `<article class="customer-order" data-customer-order="${order.id}"><div class="customer-order-title"><b>Pedido ${String(order.id).slice(0, 8).toUpperCase()}</b><span class="badge" style="position:static">${statusLabel(order.status)}</span></div><p>${new Date(order.created_at).toLocaleDateString("es-AR")} · ${money(order.subtotal)}</p><small>${(order.order_items || []).map((i) => `${i.quantity}× ${escapeHtml(i.product_name)}`).join(" · ")}</small><div class="customer-order-actions">${["cancelled", "fulfilled"].includes(order.status) ? `<button class="btn outline" data-hide-order="${order.id}" type="button">Quitar de mi cuenta</button>` : ""}${["deposit_paid", "paid", "in_transit"].includes(order.status) ? `<a class="btn outline" target="_blank" rel="noopener" href="https://wa.me/${state.settings.sales_whatsapp || "5491134322199"}?text=${encodeURIComponent(customerOrderConsultation(order))}">Consultar</a>` : ""}</div></article>`,
-        )
-        .join("")
-    : '<div class="notice">Todavía no tenés pedidos.</div>';
+  el.innerHTML = `<div class="customer-page-head"><div><p class="eyebrow orange">HISTORIAL</p><h1>Mis compras</h1><p>Seguimiento, pagos y comunicación de cada pedido.</p></div><span class="session-badge">${visibleOrders.length} compra${visibleOrders.length === 1 ? "" : "s"}</span></div>${visibleOrders.length ? `<div class="purchase-list">${visibleOrders.map(customerOrderMarkup).join("")}</div>` : '<div class="notice">Todavía no tenés compras con pago acreditado.</div>'}`;
   document.querySelectorAll("[data-hide-order]").forEach((button) => {
     button.onclick = () => hideCustomerOrder(button.dataset.hideOrder, button);
+  });
+  document.querySelectorAll("[data-customer-order-chat]").forEach((button) => {
+    button.onclick = () =>
+      openCustomerOrderChat(
+        button.dataset.customerOrderChat,
+        visibleOrders.find(
+          (order) => String(order.id) === String(button.dataset.customerOrderChat),
+        ),
+      );
   });
 }
 async function hideCustomerOrder(orderId, button) {
@@ -1455,6 +1505,7 @@ async function getCustomerConversation() {
     .from("support_conversations")
     .select("*")
     .eq("user_id", state.user.id)
+    .is("order_id", null)
     .maybeSingle();
   if (readError) throw readError;
   if (existing) return existing;
@@ -1465,6 +1516,14 @@ async function getCustomerConversation() {
     .single();
   if (error) throw error;
   return data;
+}
+async function getOrderConversation(orderId) {
+  const { data, error } = await supabase.rpc(
+    "get_or_create_order_conversation",
+    { p_order_id: orderId },
+  );
+  if (error) throw error;
+  return Array.isArray(data) ? data[0] : data;
 }
 function chatMessagesMarkup(messages) {
   if (!messages.length)
@@ -1551,7 +1610,9 @@ async function deleteSupportConversation(conversationId, owner = "customer") {
   }
   stopChatRealtime();
   toast("Conversación eliminada. Podés iniciar una nueva.", "success");
-  if (owner === "admin") await openAdminChats();
+  if (owner === "admin-order") await openAdminOrders();
+  else if (owner === "customer-order") await loadOrders();
+  else if (owner === "admin") await openAdminChats();
   else await openCustomerChat();
 }
 async function sendChatMessage(event, conversationId, refresh) {
@@ -1595,6 +1656,39 @@ async function openCustomerChat() {
   } catch (error) {
     console.error(error);
     workspace.innerHTML = '<div class="notice">No pudimos abrir el chat. Aplicá la última migración de Supabase y volvé a intentar.</div>';
+  }
+}
+async function openCustomerOrderChat(orderId, order = null) {
+  setAccountTab("order-chat");
+  state.activeOrderId = orderId;
+  const workspace = document.querySelector("#accountWorkspace");
+  if (!workspace) return;
+  workspace.innerHTML = '<div class="empty">Abriendo conversación del pedido…</div>';
+  try {
+    const conversation = await getOrderConversation(orderId);
+    if (!conversation?.id) throw new Error("No se pudo crear la conversación");
+    state.activeConversationId = conversation.id;
+    const label = orderProductsLabel(order || {}) || "Tu compra";
+    workspace.innerHTML = `<div class="order-chat-context"><button class="text-button" id="backToCustomerOrders" type="button">← Volver a mis compras</button><span class="order-status ${order ? `status-${escapeHtml(order.status)}` : ""}">${order ? statusLabel(order.status) : "Pedido"}</span><h1>${escapeHtml(label)}</h1><p>Usá este espacio para consultar fechas de fabricación o entrega, retiro y formas de abonar el saldo.</p></div><div class="chat-head"><div><h3>Chat de la compra</h3><p>Conversación privada con administración · actualización en vivo.</p></div><div class="chat-head-actions"><span class="live-indicator"><i></i> En vivo</span><button class="btn danger" id="deleteCustomerOrderConversation" type="button">Eliminar chat</button></div></div><div id="customerOrderChatMessages" class="chat-messages"></div><form id="customerOrderChatForm" class="chat-form"><textarea name="message" maxlength="2000" rows="3" placeholder="Escribí una consulta sobre esta compra…" required></textarea><button class="btn cta" type="submit">Enviar</button></form>`;
+    const refresh = () =>
+      loadConversationMessages(
+        conversation.id,
+        document.querySelector("#customerOrderChatMessages"),
+      );
+    document.querySelector("#backToCustomerOrders").onclick = () => {
+      setAccountTab("orders");
+      workspace.innerHTML = '<div id="ordersList"><div class="empty">Cargando compras…</div></div>';
+      loadOrders();
+    };
+    document.querySelector("#deleteCustomerOrderConversation").onclick = () =>
+      deleteSupportConversation(conversation.id, "customer-order");
+    document.querySelector("#customerOrderChatForm").onsubmit = (event) =>
+      sendChatMessage(event, conversation.id, refresh);
+    await refresh();
+    startChatRealtime(conversation.id, refresh);
+  } catch (error) {
+    console.error(error);
+    workspace.innerHTML = '<div class="notice">No pudimos abrir el chat de esta compra. Aplicá la migración 013 y volvé a intentar.</div>';
   }
 }
 function statusLabel(status) {
@@ -1944,40 +2038,49 @@ async function openAdminChats() {
   if (userIds.length) {
     const { data } = await supabase
       .from("profiles")
-      .select("id,full_name")
+      .select("id,full_name,avatar_url,avatar_preset")
       .in("id", userIds);
     profiles = Array.isArray(data) ? data : data ? [data] : [];
   }
-  const profileNames = Object.fromEntries(
-    profiles.map((profile) => [profile.id, profile.full_name]),
+  const profilesById = Object.fromEntries(
+    profiles.map((profile) => [profile.id, profile]),
   );
   workspace.innerHTML = `<div class="admin-section-title"><div><h3>Chats privados</h3><p>Las conversaciones y los mensajes nuevos aparecen automáticamente.</p></div><span class="live-indicator"><i></i> En vivo</span></div><div class="admin-chat-list">${conversations?.length ? conversations.map((conversation) => {
-    const name = profileNames[conversation.user_id] || "Cliente";
-    return `<button class="admin-chat-card" type="button" data-open-admin-chat="${conversation.id}" data-admin-chat-name="${escapeHtml(name)}"><span><b>${escapeHtml(name)}</b><small>${conversation.status === "closed" ? "Cerrado" : "Abierto"}</small></span><time>${new Date(conversation.updated_at).toLocaleString("es-AR", { dateStyle: "short", timeStyle: "short" })}</time></button>`;
+    const profile = profilesById[conversation.user_id] || {};
+    const name = profile.full_name || "Cliente";
+    return `<button class="admin-chat-card" type="button" data-open-admin-chat="${conversation.id}" data-admin-chat-name="${escapeHtml(name)}" data-admin-chat-order="${escapeHtml(conversation.order_id || "")}">${avatarMarkup(profile, "user-avatar admin-chat-avatar")}<span><b>${escapeHtml(name)}</b><small>${conversation.order_id ? `Pedido ${escapeHtml(String(conversation.order_id).slice(0, 8).toUpperCase())}` : "Consulta general"} · ${conversation.status === "closed" ? "Cerrado" : "Abierto"}</small></span><time>${new Date(conversation.updated_at).toLocaleString("es-AR", { dateStyle: "short", timeStyle: "short" })}</time></button>`;
   }).join("") : '<div class="notice">Todavía no hay conversaciones.</div>'}</div>`;
   document.querySelectorAll("[data-open-admin-chat]").forEach((button) => {
     button.onclick = () =>
       openAdminConversation(
         button.dataset.openAdminChat,
         button.dataset.adminChatName,
+        { orderId: button.dataset.adminChatOrder || null },
       );
   });
 }
-async function openAdminConversation(conversationId, customerName) {
-  state.adminView = "conversation";
-  setAdminActive("chats");
+async function openAdminConversation(conversationId, customerName, context = {}) {
+  state.adminView = context.backToOrders ? "order-conversation" : "conversation";
+  setAdminActive(context.backToOrders ? "orders" : "chats");
   state.activeConversationId = conversationId;
   state.activeConversationName = customerName || "Cliente";
+  state.activeOrderId = context.orderId || null;
   const workspace = document.querySelector("#adminWorkspace");
-  workspace.innerHTML = `<div class="chat-head"><div><button class="text-button" id="backToAdminChats" type="button">← Volver a chats</button><h3>${escapeHtml(customerName || "Cliente")}</h3><p>Conversación privada que se actualiza automáticamente.</p></div><div class="chat-head-actions"><span class="live-indicator"><i></i> En vivo</span><button class="btn danger" id="deleteAdminConversation" type="button">Eliminar chat</button></div></div><div id="adminChatMessages" class="chat-messages"></div><form id="adminChatForm" class="chat-form"><textarea name="message" maxlength="2000" rows="3" placeholder="Responder al cliente…" required></textarea><button class="btn cta" type="submit">Enviar respuesta</button></form>`;
+  const title = context.orderLabel || customerName || "Cliente";
+  workspace.innerHTML = `<div class="chat-head"><div><button class="text-button" id="backToAdminChats" type="button">← Volver a ${context.backToOrders ? "pedidos" : "chats"}</button><h3>${escapeHtml(title)}</h3><p>${context.orderId ? `Chat del pedido con ${escapeHtml(customerName || "Cliente")}. Informá plazos, entrega y saldo pendiente.` : "Conversación privada que se actualiza automáticamente."}</p></div><div class="chat-head-actions"><span class="live-indicator"><i></i> En vivo</span><button class="btn danger" id="deleteAdminConversation" type="button">Eliminar chat</button></div></div><div id="adminChatMessages" class="chat-messages"></div><form id="adminChatForm" class="chat-form"><textarea name="message" maxlength="2000" rows="3" placeholder="${context.orderId ? "Informá fechas, retiro, entrega o cómo abonar el saldo…" : "Responder al cliente…"}" required></textarea><button class="btn cta" type="submit">Enviar respuesta</button></form>`;
   const refresh = () =>
     loadConversationMessages(
       conversationId,
       document.querySelector("#adminChatMessages"),
     );
-  document.querySelector("#backToAdminChats").onclick = openAdminChats;
+  document.querySelector("#backToAdminChats").onclick = context.backToOrders
+    ? openAdminOrders
+    : openAdminChats;
   document.querySelector("#deleteAdminConversation").onclick = () =>
-    deleteSupportConversation(conversationId, "admin");
+    deleteSupportConversation(
+      conversationId,
+      context.backToOrders ? "admin-order" : "admin",
+    );
   document.querySelector("#adminChatForm").onsubmit = (event) =>
     sendChatMessage(event, conversationId, refresh);
   try {
@@ -2011,7 +2114,19 @@ async function openAdminOrders() {
       order.status,
     ),
   );
-  ws.innerHTML = `<h3>Pedidos</h3>${visibleOrders.length ? visibleOrders.map((o) => `<article class="customer-order" data-order-card="${o.id}"><div class="order-heading"><div><small>CLIENTE</small><b>${escapeHtml(o.customer_name || "Sin nombre")}</b></div><span>Pedido ${String(o.id).slice(0, 8).toUpperCase()}</span></div><div class="order-details"><span><small>Email</small>${escapeHtml(o.customer_email || "Sin email")}</span><span><small>Teléfono</small>${escapeHtml(o.customer_phone || "Sin teléfono")}</span><span><small>Total</small>${money(o.subtotal)}</span></div>${o.order_items?.length ? `<div class="order-items">${o.order_items.map((item) => `<span>${Number(item.quantity) || 0}× ${escapeHtml(item.product_name || "Producto")}</span>`).join("")}</div>` : ""}<label class="order-status-label">Estado<select data-order-status="${o.id}">${["deposit_paid", "paid", "in_transit", "fulfilled", "cancelled"].map((s) => `<option value="${s}" ${o.status === s ? "selected" : ""}>${statusLabel(s)}</option>`).join("")}</select></label>${["fulfilled", "cancelled"].includes(o.status) ? `<button class="btn danger" data-delete-order="${o.id}">Eliminar pedido</button>` : ""}</article>`).join("") : '<div class="notice">No hay pedidos con pago acreditado.</div>'}`;
+  const userIds = [...new Set(visibleOrders.map((order) => order.user_id).filter(Boolean))];
+  let profiles = [];
+  if (userIds.length) {
+    const { data: profileData } = await supabase
+      .from("profiles")
+      .select("id,full_name,avatar_url,avatar_preset")
+      .in("id", userIds);
+    profiles = Array.isArray(profileData) ? profileData : profileData ? [profileData] : [];
+  }
+  const profilesById = Object.fromEntries(
+    profiles.map((profile) => [profile.id, profile]),
+  );
+  ws.innerHTML = `<div class="admin-page-head"><div><p class="eyebrow orange">VENTAS</p><h1>Pedidos</h1><p>Compras con pago o seña acreditada. Los cambios se sincronizan en vivo.</p></div><span class="live-indicator"><i></i> En vivo</span></div>${visibleOrders.length ? `<div class="admin-orders-list">${visibleOrders.map((order) => adminOrderMarkup(order, profilesById[order.user_id])).join("")}</div>` : '<div class="notice">No hay pedidos con pago acreditado.</div>'}`;
   document.querySelectorAll("[data-order-status]").forEach(
     (select) =>
       (select.onchange = async () => {
@@ -2050,6 +2165,43 @@ async function openAdminOrders() {
       toast("Pedido eliminado", "success");
     };
   });
+  document.querySelectorAll("[data-admin-order-chat]").forEach((button) => {
+    button.onclick = async () => {
+      const order = visibleOrders.find(
+        (item) => String(item.id) === String(button.dataset.adminOrderChat),
+      );
+      setBusy(button, true, "Abriendo…");
+      try {
+        const conversation = await getOrderConversation(order.id);
+        await openAdminConversation(
+          conversation.id,
+          order.customer_name || "Cliente",
+          {
+            orderId: order.id,
+            orderLabel: orderProductsLabel(order),
+            backToOrders: true,
+          },
+        );
+      } catch (error) {
+        toast(error.message || "No se pudo abrir el chat del pedido", "error");
+      } finally {
+        setBusy(button, false);
+      }
+    };
+  });
+}
+
+function adminOrderMarkup(order, profile = {}) {
+  const name = profile.full_name || order.customer_name || "Sin nombre";
+  const balance = Math.max(
+    0,
+    Number(order.subtotal || 0) - Number(order.amount_to_pay || order.subtotal || 0),
+  );
+  const products = (order.order_items || []).map((item) => {
+    const image = orderItemImage(item);
+    return `<div class="admin-order-product"><div>${image ? `<img src="${escapeHtml(image)}" alt="${escapeHtml(item.product_name || "Producto")}">` : `<span>${escapeHtml(String(item.product_name || "P").slice(0, 1))}</span>`}</div><p><b>${escapeHtml(item.product_name || "Producto")}</b><small>${Math.max(1, Number(item.quantity) || 1)} unidad${Number(item.quantity) === 1 ? "" : "es"}</small></p></div>`;
+  }).join("");
+  return `<article class="admin-order-card" data-order-card="${order.id}"><header><div class="admin-order-customer">${avatarMarkup(profile, "user-avatar admin-order-avatar")}<div><small>CLIENTE</small><b>${escapeHtml(name)}</b><span>${escapeHtml(order.customer_email || "Sin email")} · ${escapeHtml(order.customer_phone || "Sin teléfono")}</span></div></div><div><span class="order-status status-${escapeHtml(order.status)}">${statusLabel(order.status)}</span><small>Pedido ${escapeHtml(String(order.id).slice(0, 8).toUpperCase())}</small></div></header><div class="admin-order-products">${products || '<span class="notice">Sin detalle de productos</span>'}</div><div class="admin-order-finance"><span><small>Total</small><b>${money(order.subtotal)}</b></span><span><small>${order.payment_type === "deposit" ? "Seña" : "Acreditado"}</small><b>${money(order.amount_to_pay || order.subtotal)}</b></span>${balance ? `<span class="pending"><small>Saldo pendiente</small><b>${money(balance)}</b></span>` : ""}</div><div class="admin-order-actions"><label class="order-status-label">Estado<select data-order-status="${order.id}">${["deposit_paid", "paid", "in_transit", "fulfilled", "cancelled"].map((status) => `<option value="${status}" ${order.status === status ? "selected" : ""}>${statusLabel(status)}</option>`).join("")}</select></label><button class="btn cta" data-admin-order-chat="${order.id}" type="button">Abrir chat del pedido</button>${["fulfilled", "cancelled"].includes(order.status) ? `<button class="btn danger" data-delete-order="${order.id}" type="button">Eliminar pedido</button>` : ""}</div></article>`;
 }
 
 function openEditProduct(id = null, similarId = null) {
