@@ -20,6 +20,10 @@ const realtimeMigration = readFileSync(
   new URL("supabase/migrations/009_realtime_sync_and_chat_deletion.sql", root),
   "utf8",
 );
+const paidOrdersMigration = readFileSync(
+  new URL("supabase/migrations/010_hide_unpaid_orders.sql", root),
+  "utf8",
+);
 const rows = {
   categories: [
     {
@@ -63,7 +67,7 @@ const rows = {
   ],
   store_settings: {
     id: 1,
-    deposit_percentage: 30,
+    deposit_percentage: 50,
     freight_whatsapp: "5491134322199",
     sales_whatsapp: "5491134322199",
   },
@@ -208,7 +212,7 @@ const executable = html
   .replace('<script src="assets/vendor/supabase.js?v=1"></script>', "")
   .replace('<script src="config.js"></script>', "")
   .replace(
-    '<script src="app.js?v=16"></script>',
+    '<script src="app.js?v=17"></script>',
     `<script>${app.replaceAll("</script>", "<\\/script>")}</script>`,
   );
 const errors = [];
@@ -390,6 +394,21 @@ assert(
   "La ficha individual no muestra los trabajos",
 );
 assert(
+  d.querySelector(".client-detail-head")?.textContent.includes(
+    "Gastronomía",
+  ) &&
+    d.querySelector(".client-detail-head")?.textContent.includes(
+      "Cliente ejemplo",
+    ) &&
+    !d.querySelector(".client-detail-head")?.textContent.includes(
+      "Trabajo a medida",
+    ) &&
+    d.querySelector(".client-work-copy")?.textContent.includes(
+      "Trabajo a medida",
+    ),
+  "La descripción sigue pegada al logo en vez de acompañar las fotos",
+);
+assert(
   d.querySelectorAll("#footerCategories a").length === 1,
   "Las categorías no aparecen al final de la página",
 );
@@ -503,6 +522,7 @@ assert(
 assert(
   paymentFunction.includes('MP_ENVIRONMENT') &&
     paymentFunction.includes('user_id: user.id') &&
+    paymentFunction.includes('status: "awaiting_payment"') &&
     !paymentFunction.includes('sandbox_init_point'),
   "El pago no quedó protegido para producción y usuarios autenticados",
 );
@@ -525,6 +545,13 @@ assert(
     realtimeMigration.includes("supabase_realtime") &&
     realtimeMigration.includes("replica identity full"),
   "La migración de tiempo real y borrado seguro está incompleta",
+);
+assert(
+  paidOrdersMigration.includes("status = 'awaiting_payment'") &&
+    paidOrdersMigration.includes("status <> 'awaiting_payment'") &&
+    paidOrdersMigration.includes("deposit_percentage = 50") &&
+    app.match(/\.neq\("status", "awaiting_payment"\)/g)?.length >= 2,
+  "Los intentos sin pago todavía pueden aparecer como pedidos",
 );
 await authListener?.("SIGNED_OUT", null);
 await new Promise((resolve) => setTimeout(resolve, 30));
@@ -559,5 +586,5 @@ if (errors.length) {
   process.exit(1);
 }
 console.log(
-  "QA OK: catálogo, carrito, pagos, usuarios y sincronización en vivo de pedidos, preguntas y chat",
+  "QA OK: pedidos sólo tras pago, ficha de clientes, carrito, pagos y sincronización en vivo",
 );

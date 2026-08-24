@@ -1,3 +1,4 @@
+// @ts-ignore -- Las Edge Functions resuelven imports URL mediante Deno.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { orderEmailHtml, sendTransactionalEmail } from "../_shared/email.ts";
 
@@ -48,7 +49,7 @@ async function validSignature(req: Request, dataId: string) {
   return hex === parts.v1;
 }
 
-Deno.serve(async (req) => {
+Deno.serve(async (req: Request) => {
   try {
     const url = new URL(req.url);
 

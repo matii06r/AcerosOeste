@@ -1,6 +1,7 @@
+// @ts-ignore -- Las Edge Functions resuelven imports URL mediante Deno.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-Deno.serve(async (req) => {
+Deno.serve(async (req: Request) => {
   const configuredSite = Deno.env.get("SITE_URL") || "";
   const cors = {
     "Access-Control-Allow-Origin": "*",
@@ -61,7 +62,7 @@ Deno.serve(async (req) => {
       .select("deposit_percentage")
       .eq("id", 1)
       .single();
-    const percentage = Number(settings?.deposit_percentage || 30);
+    const percentage = Number(settings?.deposit_percentage || 50);
     const amount =
       paymentType === "deposit"
         ? Math.round(subtotal * percentage) / 100
@@ -70,7 +71,7 @@ Deno.serve(async (req) => {
       .from("orders")
       .insert({
         user_id: user.id,
-        status: "pending",
+        status: "awaiting_payment",
         payment_type: paymentType,
         subtotal,
         deposit_percentage: paymentType === "deposit" ? percentage : null,
