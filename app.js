@@ -731,10 +731,7 @@ async function openNotification(notification) {
     }
   }
   if (notification.type === "feedback") {
-    toast(
-      "La sugerencia completa fue enviada al correo de gestión.",
-      "info",
-    );
+    await openFeedbackNotification(notification);
     return;
   }
   location.hash = "panel-general";
@@ -782,6 +779,66 @@ async function openNotification(notification) {
     }
   }
   await openAdminChats();
+}
+
+async function openFeedbackNotification(notification) {
+  if (!notification.feedback_id) {
+    openModal(`<button class="modal-close" data-close>×</button><p class="eyebrow orange">SUGERENCIA</p><h2>${escapeHtml(notification.title || "Nueva sugerencia")}</h2><div class="feedback-admin-message">${escapeHtml(notification.body || "Sin detalle")}</div><div class="feedback-email-state pending"><b>Envío no confirmado</b><small>Este aviso fue creado antes de incorporar el seguimiento de correo. La sugerencia quedó registrada.</small></div>`);
+    return;
+  }
+  const { data: feedback, error } = await supabase
+    .from("feedback_submissions")
+    .select("*")
+    .eq("id", notification.feedback_id)
+    .maybeSingle();
+  if (error || !feedback) {
+    toast("No pudimos abrir el detalle de la sugerencia.", "error");
+    return;
+  }
+  await supabase
+    .from("feedback_submissions")
+    .update({ status: "reviewed" })
+    .eq("id", feedback.id);
+  const categories = {
+    producto: "Producto",
+    atencion: "Atención",
+    entrega: "Entrega o retiro",
+    sitio: "Página web",
+    general: "Sugerencia general",
+  };
+  const emailSent = Boolean(feedback.email_sent_at);
+  openModal(`<button class="modal-close" data-close>×</button><p class="eyebrow orange">SUGERENCIA</p><h2>${escapeHtml(categories[feedback.category] || "Sugerencia general")}</h2><div class="feedback-admin-data"><span><small>Nombre</small><b>${escapeHtml(feedback.name)}</b></span><span><small>Email</small><a href="mailto:${escapeHtml(feedback.email)}">${escapeHtml(feedback.email)}</a></span>${feedback.order_reference ? `<span><small>Pedido</small><b>${escapeHtml(feedback.order_reference)}</b></span>` : ""}</div><div class="feedback-admin-message">${escapeHtml(feedback.message)}</div><div class="feedback-email-state ${emailSent ? "sent" : "pending"}"><b>${emailSent ? "Correo enviado" : "Correo pendiente"}</b><small>${emailSent ? `Confirmado el ${new Date(feedback.email_sent_at).toLocaleString("es-AR")}.` : escapeHtml(feedback.email_error || "Resend todavía no confirmó la entrega.")}</small></div><div class="feedback-admin-actions"><button class="btn outline" type="button" data-close>Cerrar</button>${emailSent ? "" : `<button class="btn cta" id="retryFeedbackEmail" type="button">Reintentar correo</button>`}</div>`);
+  document.querySelector("#retryFeedbackEmail")?.addEventListener("click", (event) =>
+    retryFeedbackEmail(feedback.id, event.currentTarget),
+  );
+}
+
+async function retryFeedbackEmail(feedbackId, button) {
+  setBusy(button, true, "Reintentando…");
+  const { data, error } = await supabase.functions.invoke(
+    "retry-feedback-email",
+    { body: { feedbackId } },
+  );
+  setBusy(button, false);
+  if (error || !data?.sent) {
+    let message = data?.error;
+    if (!message && error?.context?.json) {
+      try {
+        message = (await error.context.json())?.error;
+      } catch {
+        // El mensaje general cubre respuestas no JSON.
+      }
+    }
+    return toast(
+      readableFunctionError(
+        message || error?.message,
+        "El correo sigue pendiente. Revisá la API key de Resend.",
+      ),
+      "error",
+    );
+  }
+  closeModal();
+  toast("Sugerencia enviada al correo de gestión.", "success");
 }
 function handleNotificationRealtime(payload) {
   if (!state.user) return;
@@ -1393,7 +1450,9 @@ async function submitFeedback(event) {
       "error",
     );
   }
-  document.querySelector("#feedbackContent").innerHTML = `<div class="feedback-success"><span>✓</span><p class="eyebrow orange">MENSAJE RECIBIDO</p><h1>Gracias por ayudarnos a mejorar.</h1><p>La sugerencia fue enviada al equipo de Aceros Oeste.</p><a class="btn cta" href="#inicio">Volver a la tienda</a></div>`;
+  document.querySelector("#feedbackContent").innerHTML = `<div class="feedback-success"><span>✓</span><p class="eyebrow orange">MENSAJE RECIBIDO</p><h1>Gracias por ayudarnos a mejorar.</h1><p>${data.emailSent ? "La sugerencia fue guardada y enviada al equipo de Aceros Oeste." : "La sugerencia quedó guardada para revisión. El aviso por correo está temporalmente pendiente."}</p><a class="btn cta" href="#inicio">Volver a la tienda</a></div>`;
+  if (!data.emailSent)
+    toast("Sugerencia guardada. El correo de gestión está pendiente.", "info");
   window.scrollTo(0, 0);
 }
 
@@ -2881,6 +2940,7 @@ async function openAdminInvoices() {
     .from("orders")
     .select("*, order_items(*), invoices(*)")
     .in("status", ["deposit_paid", "paid", "in_transit", "fulfilled", "cancelled"])
+    .is("billing_archived_at", null)
     .order("created_at", { ascending: false })
     .limit(200);
   if (error) {
@@ -2900,6 +2960,12 @@ async function openAdminInvoices() {
   document.querySelectorAll("[data-admin-invoice-download]").forEach((button) => {
     button.onclick = () => downloadInvoice(button.dataset.adminInvoiceDownload, button);
   });
+  document.querySelectorAll("[data-resend-invoice]").forEach((button) => {
+    button.onclick = () => resendAdminInvoice(button.dataset.resendInvoice, button);
+  });
+  document.querySelectorAll("[data-archive-billing]").forEach((button) => {
+    button.onclick = () => archiveBillingOrder(button.dataset.archiveBilling, button);
+  });
 }
 
 function adminInvoiceOrderMarkup(order) {
@@ -2907,7 +2973,65 @@ function adminInvoiceOrderMarkup(order) {
   const invoiced = invoices
     .filter((invoice) => invoice.status !== "cancelled")
     .reduce((sum, invoice) => sum + Number(invoice.gross_amount || 0), 0);
-  return `<article class="invoice-order-card"><header><div><small>PEDIDO ${escapeHtml(String(order.id).slice(0, 8).toUpperCase())}</small><h3>${escapeHtml(orderProductsLabel(order) || "Compra")}</h3><p>${escapeHtml(order.customer_name || "Cliente")} · ${escapeHtml(order.customer_email || "Sin email")}</p></div><span class="billing-status billing-${escapeHtml(order.billing_status || "pending")}">${order.billing_status === "invoiced" ? "Facturado" : order.billing_status === "partial" ? "Facturación parcial" : "Pendiente"}</span></header><div class="invoice-order-data"><span><small>Condición</small><b>${escapeHtml(billingConditionLabel(order.billing_condition))}</b></span><span><small>Razón social</small><b>${escapeHtml(order.billing_name || order.customer_name || "Sin informar")}</b></span><span><small>Documento</small><b>${escapeHtml([order.billing_document_type, order.billing_document_number].filter(Boolean).join(" ") || "Sin informar")}</b></span><span><small>Total del pedido</small><b>${money(order.subtotal)}</b></span><span><small>Ya registrado</small><b>${money(invoiced)}</b></span></div><div class="invoice-doc-list">${invoices.length ? invoices.map((invoice) => `<div><span><b>${escapeHtml(invoice.invoice_type)}</b><small>${invoice.invoice_number ? `${String(invoice.point_of_sale || 0).padStart(5, "0")}-${String(invoice.invoice_number).padStart(8, "0")}` : "Sin numeración"} · ${money(invoice.gross_amount)} · ${invoice.status === "sent" ? "Enviada" : "Registrada"}</small></span>${invoice.pdf_path ? `<button class="text-button" type="button" data-admin-invoice-download="${escapeHtml(invoice.pdf_path)}">Ver PDF</button>` : ""}</div>`).join("") : '<small>Todavía no hay comprobantes registrados.</small>'}</div><footer><button class="btn cta" type="button" data-create-invoice="${order.id}">Registrar comprobante</button></footer></article>`;
+  const hasSentInvoice = invoices.some((invoice) => invoice.status === "sent");
+  return `<article class="invoice-order-card" data-invoice-order-card="${order.id}"><header><div><small>PEDIDO ${escapeHtml(String(order.id).slice(0, 8).toUpperCase())}</small><h3>${escapeHtml(orderProductsLabel(order) || "Compra")}</h3><p>${escapeHtml(order.customer_name || "Cliente")} · ${escapeHtml(order.customer_email || "Sin email")}</p></div><span class="billing-status billing-${escapeHtml(order.billing_status || "pending")}">${order.billing_status === "invoiced" ? "Facturado" : order.billing_status === "partial" ? "Facturación parcial" : "Pendiente"}</span></header><div class="invoice-order-data"><span><small>Condición</small><b>${escapeHtml(billingConditionLabel(order.billing_condition))}</b></span><span><small>Razón social</small><b>${escapeHtml(order.billing_name || order.customer_name || "Sin informar")}</b></span><span><small>Documento</small><b>${escapeHtml([order.billing_document_type, order.billing_document_number].filter(Boolean).join(" ") || "Sin informar")}</b></span><span><small>Total del pedido</small><b>${money(order.subtotal)}</b></span><span><small>Ya registrado</small><b>${money(invoiced)}</b></span></div><div class="invoice-doc-list">${invoices.length ? invoices.map(adminInvoiceDocumentMarkup).join("") : '<small>Todavía no hay comprobantes registrados.</small>'}</div><footer>${order.billing_status === "invoiced" && hasSentInvoice ? `<button class="btn outline" type="button" data-archive-billing="${order.id}">Quitar del panel</button>` : ""}<button class="btn cta" type="button" data-create-invoice="${order.id}">Registrar comprobante</button></footer></article>`;
+}
+
+function adminInvoiceDocumentMarkup(invoice) {
+  const number = invoice.invoice_number
+    ? `${String(invoice.point_of_sale || 0).padStart(5, "0")}-${String(invoice.invoice_number).padStart(8, "0")}`
+    : "Sin numeración";
+  return `<div><span><b>${escapeHtml(invoice.invoice_type)}</b><small>${number} · ${money(invoice.gross_amount)} · ${invoice.status === "sent" ? "Enviada" : "Registrada"}</small></span><div class="invoice-document-actions">${invoice.pdf_path ? `<button class="text-button" type="button" data-admin-invoice-download="${escapeHtml(invoice.pdf_path)}">Ver PDF</button>` : ""}${invoice.pdf_path ? `<button class="text-button" type="button" data-resend-invoice="${invoice.id}">${invoice.status === "sent" ? "Reenviar" : "Enviar"}</button>` : ""}</div></div>`;
+}
+
+async function resendAdminInvoice(invoiceId, button) {
+  setBusy(button, true, "Enviando…");
+  const { data, error } = await supabase.functions.invoke(
+    "send-invoice-email",
+    { body: { invoiceId } },
+  );
+  setBusy(button, false);
+  if (error || !data?.sent) {
+    let message = data?.error;
+    if (!message && error?.context?.json) {
+      try {
+        message = (await error.context.json())?.error;
+      } catch {
+        // Se conserva un mensaje entendible si la respuesta no es JSON.
+      }
+    }
+    return toast(
+      readableFunctionError(
+        message || error?.message,
+        "La factura quedó guardada, pero el correo no se pudo enviar.",
+      ),
+      "error",
+    );
+  }
+  await openAdminInvoices();
+  toast("Factura enviada al cliente.", "success");
+}
+
+async function archiveBillingOrder(orderId, button) {
+  if (
+    !(await confirmAction({
+      title: "Quitar facturación del panel",
+      message:
+        "El detalle dejará de verse en esta lista, pero la factura y el pedido se conservarán.",
+      confirmLabel: "Quitar del panel",
+    }))
+  )
+    return;
+  setBusy(button, true, "Quitando…");
+  const { error } = await supabase
+    .from("orders")
+    .update({ billing_archived_at: new Date().toISOString() })
+    .eq("id", orderId)
+    .eq("billing_status", "invoiced");
+  setBusy(button, false);
+  if (error) return toast(error.message, "error");
+  document.querySelector(`[data-invoice-order-card="${CSS.escape(orderId)}"]`)?.remove();
+  toast("Detalle quitado del panel de facturación.", "success");
 }
 
 function openInvoiceEditor(order) {
@@ -3015,6 +3139,7 @@ async function openAdminWithdrawals() {
   const { data, error } = await supabase
     .from("withdrawal_requests")
     .select("*, orders(customer_name,customer_email,subtotal,payment_type,status)")
+    .is("archived_at", null)
     .order("created_at", { ascending: false })
     .limit(200);
   if (error) {
@@ -3029,6 +3154,10 @@ async function openAdminWithdrawals() {
       openWithdrawalReview(
         requests.find((item) => String(item.id) === button.dataset.reviewWithdrawal),
       );
+  });
+  document.querySelectorAll("[data-archive-withdrawal]").forEach((button) => {
+    button.onclick = () =>
+      archiveWithdrawalRequest(button.dataset.archiveWithdrawal, button);
   });
 }
 
@@ -3048,12 +3177,12 @@ function withdrawalStatusLabel(status) {
 
 function adminWithdrawalMarkup(request) {
   const items = Array.isArray(request.items) ? request.items : [];
-  return `<article class="withdrawal-admin-card"><header><div><small>${escapeHtml(request.request_code)}</small><h3>${escapeHtml(request.customer_name)}</h3><p>${escapeHtml(request.customer_email)} · ${escapeHtml(request.customer_phone || "Sin teléfono")}</p></div><span class="withdrawal-status">${escapeHtml(withdrawalStatusLabel(request.status))}</span></header><div class="withdrawal-products">${items.map((item) => `<span><b>${Math.max(1, Number(item.quantity) || 1)}× ${escapeHtml(item.product_name || "Producto")}</b><small>${escapeHtml(saleTypeLabel(item.sale_type))}</small></span>`).join("") || "Sin detalle"}</div>${request.reason ? `<blockquote>${escapeHtml(request.reason)}</blockquote>` : ""}${request.resolution_reason ? `<div class="withdrawal-resolution"><b>Resolución registrada</b><p>${escapeHtml(request.resolution_reason)}</p></div>` : ""}<footer><small>${new Date(request.created_at).toLocaleString("es-AR")}</small><button class="btn cta" type="button" data-review-withdrawal="${request.id}">Revisar solicitud</button></footer></article>`;
+  return `<article class="withdrawal-admin-card" data-withdrawal-card="${request.id}"><header><div><small>${escapeHtml(request.request_code)}</small><h3>${escapeHtml(request.customer_name)}</h3><p>${escapeHtml(request.customer_email)} · ${escapeHtml(request.customer_phone || "Sin teléfono")}</p></div><span class="withdrawal-status">${escapeHtml(withdrawalStatusLabel(request.status))}</span></header><div class="withdrawal-products">${items.map((item) => `<span><b>${Math.max(1, Number(item.quantity) || 1)}× ${escapeHtml(item.product_name || "Producto")}</b><small>${escapeHtml(saleTypeLabel(item.sale_type))}</small></span>`).join("") || "Sin detalle"}</div>${request.reason ? `<blockquote>${escapeHtml(request.reason)}</blockquote>` : ""}${request.resolution_reason ? `<div class="withdrawal-resolution"><b>Resolución registrada</b><p>${escapeHtml(request.resolution_reason)}</p>${request.resolution_email_sent_at ? '<small class="delivery-ok">Email enviado al cliente</small>' : request.resolution_email_error ? '<small class="delivery-pending">Email pendiente</small>' : ""}</div>` : ""}<footer><small>${new Date(request.created_at).toLocaleString("es-AR")}</small><div>${request.resolution_reason ? `<button class="btn outline" type="button" data-archive-withdrawal="${request.id}">Archivar</button>` : ""}<button class="btn cta" type="button" data-review-withdrawal="${request.id}">Revisar solicitud</button></div></footer></article>`;
 }
 
 function openWithdrawalReview(request) {
   if (!request) return;
-  openModal(`<button class="modal-close" data-close>×</button><p class="eyebrow orange">${escapeHtml(request.request_code)}</p><h2>Actualizar solicitud</h2><form id="withdrawalReviewForm" class="form-grid"><div class="field"><label>Estado</label><select name="status">${["under_review", "awaiting_return", "refund_pending", "refunded", "rejected", "closed"].map((status) => `<option value="${status}" ${request.status === status ? "selected" : ""}>${escapeHtml(withdrawalStatusLabel(status))}</option>`).join("")}</select></div><div class="field"><label>Importe de reintegro</label><input name="refundAmount" type="number" min="0" step="0.01" value="${escapeHtml(request.refund_amount || "")}"></div><div class="field full"><label>ID de reintegro de Mercado Pago</label><input name="mpRefundId" value="${escapeHtml(request.mp_refund_id || "")}" placeholder="Completalo si ya realizaste el reintegro"></div><div class="field full"><label>Respuesta y próximos pasos</label><textarea name="resolutionReason" maxlength="2000" rows="7" required>${escapeHtml(request.resolution_reason || "")}</textarea><small>Este texto se enviará por email al cliente.</small></div><div class="fiscal-warning field full"><b>Control manual</b><p>Registrar “Reintegrada” no mueve dinero automáticamente. Primero realizá y verificá el reintegro en Mercado Pago; después guardá aquí su identificador.</p></div><button class="btn cta field full" type="submit">Guardar y notificar</button></form>`);
+  openModal(`<button class="modal-close" data-close>×</button><p class="eyebrow orange">${escapeHtml(request.request_code)}</p><h2>Actualizar solicitud</h2><form id="withdrawalReviewForm" class="form-grid"><div class="field"><label>Estado</label><select name="status">${["under_review", "awaiting_return", "refund_pending", "refunded", "rejected", "closed"].map((status) => `<option value="${status}" ${request.status === status ? "selected" : ""}>${escapeHtml(withdrawalStatusLabel(status))}</option>`).join("")}</select></div><div class="field"><label>Importe de reintegro</label><input name="refundAmount" type="number" min="0" step="0.01" value="${escapeHtml(request.refund_amount || "")}"></div><div class="field full"><label>ID de reintegro de Mercado Pago</label><input name="mpRefundId" value="${escapeHtml(request.mp_refund_id || "")}" placeholder="Completalo si ya realizaste el reintegro"></div><div class="field full"><label>Respuesta y próximos pasos</label><textarea name="resolutionReason" maxlength="2000" rows="7" required>${escapeHtml(request.resolution_reason || "")}</textarea><small>Este texto se enviará por email al cliente.</small></div><label class="field full archive-after-reply"><input name="archiveAfterReply" type="checkbox" value="true" checked><span><b>Quitar del panel después de responder</b><small>Se conservará en Supabase y en la cuenta del cliente.</small></span></label><div class="fiscal-warning field full"><b>Control manual</b><p>Registrar “Reintegrada” no mueve dinero automáticamente. Primero realizá y verificá el reintegro en Mercado Pago; después guardá aquí su identificador.</p></div><button class="btn cta field full" type="submit">Guardar y notificar</button></form>`);
   document.querySelector("#withdrawalReviewForm").onsubmit = (event) =>
     updateWithdrawalRequest(event, request.id);
 }
@@ -3067,7 +3196,13 @@ async function updateWithdrawalRequest(event, requestId) {
   setBusy(button, true, "Guardando…");
   const { data, error } = await supabase.functions.invoke(
     "update-withdrawal-request",
-    { body: { requestId, ...values } },
+    {
+      body: {
+        requestId,
+        ...values,
+        archiveAfterReply: values.archiveAfterReply === "true",
+      },
+    },
   );
   setBusy(button, false);
   if (error || !data?.updated)
@@ -3080,7 +3215,35 @@ async function updateWithdrawalRequest(event, requestId) {
     );
   closeModal();
   await openAdminWithdrawals();
-  toast("Solicitud actualizada y cliente notificado.", "success");
+  toast(
+    data.emailSent
+      ? data.archived
+        ? "Respuesta enviada y solicitud archivada."
+        : "Solicitud actualizada y cliente notificado."
+      : "Respuesta guardada, pero el correo al cliente quedó pendiente.",
+    data.emailSent ? "success" : "error",
+  );
+}
+
+async function archiveWithdrawalRequest(requestId, button) {
+  if (
+    !(await confirmAction({
+      title: "Archivar solicitud",
+      message:
+        "La solicitud dejará de verse en el panel, pero conservará toda su información.",
+      confirmLabel: "Archivar",
+    }))
+  )
+    return;
+  setBusy(button, true, "Archivando…");
+  const { error } = await supabase
+    .from("withdrawal_requests")
+    .update({ archived_at: new Date().toISOString() })
+    .eq("id", requestId);
+  setBusy(button, false);
+  if (error) return toast(error.message, "error");
+  document.querySelector(`[data-withdrawal-card="${CSS.escape(requestId)}"]`)?.remove();
+  toast("Solicitud archivada.", "success");
 }
 
 async function openEditProduct(id = null, similarId = null) {

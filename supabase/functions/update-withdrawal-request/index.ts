@@ -39,6 +39,7 @@ Deno.serve(async (req: Request) => {
     const body = await req.json();
     const requestId = String(body?.requestId || "");
     const status = String(body?.status || "");
+    const archiveAfterReply = body?.archiveAfterReply === true;
     const allowed = [
       "under_review", "awaiting_return", "refund_pending", "refunded",
       "rejected", "closed",
@@ -75,11 +76,29 @@ Deno.serve(async (req: Request) => {
     const explanation = requestRow.resolution_reason
       ? `<p style="color:#b7c5d1;line-height:1.7">${escapeHtml(requestRow.resolution_reason)}</p>`
       : '<p style="color:#b7c5d1;line-height:1.7">Ingresá a tu cuenta o respondé este correo si necesitás más información.</p>';
-    await sendTransactionalEmail({
-      to: requestRow.customer_email,
-      subject: `${labels[status]} · ${requestRow.request_code}`,
-      html: `<div style="font-family:Arial,sans-serif;max-width:640px;margin:auto;background:#07111c;color:#eef4fa;padding:32px;border-radius:12px"><p style="color:#f56b18;font-weight:700;letter-spacing:1px">ACEROS OESTE</p><h1>${escapeHtml(labels[status])}</h1>${explanation}<div style="margin:24px 0;padding:18px;background:#101d2a;border:1px solid #283d50;border-radius:10px"><b>${escapeHtml(requestRow.request_code)}</b>${requestRow.refund_amount ? `<p>Importe registrado: $${escapeHtml(Number(requestRow.refund_amount).toLocaleString("es-AR"))}</p>` : ""}</div><a href="https://acerosoeste.com/#cuenta" style="display:inline-block;padding:13px 17px;border-radius:6px;background:#f56b18;color:#fff;text-decoration:none;font-weight:700">Ir a Mi cuenta</a></div>`,
-    });
+    let emailSent = false;
+    let emailError: string | null = null;
+    try {
+      await sendTransactionalEmail({
+        to: requestRow.customer_email,
+        subject: `${labels[status]} · ${requestRow.request_code}`,
+        html: `<div style="font-family:Arial,sans-serif;max-width:640px;margin:auto;background:#07111c;color:#eef4fa;padding:32px;border-radius:12px"><p style="color:#f56b18;font-weight:700;letter-spacing:1px">ACEROS OESTE</p><h1>${escapeHtml(labels[status])}</h1>${explanation}<div style="margin:24px 0;padding:18px;background:#101d2a;border:1px solid #283d50;border-radius:10px"><b>${escapeHtml(requestRow.request_code)}</b>${requestRow.refund_amount ? `<p>Importe registrado: $${escapeHtml(Number(requestRow.refund_amount).toLocaleString("es-AR"))}</p>` : ""}</div><a href="https://acerosoeste.com/#cuenta" style="display:inline-block;padding:13px 17px;border-radius:6px;background:#f56b18;color:#fff;text-decoration:none;font-weight:700">Ir a Mi cuenta</a></div>`,
+      });
+      emailSent = true;
+    } catch (sendError) {
+      emailError =
+        sendError instanceof Error ? sendError.message : "Correo no enviado";
+      console.error("Solicitud actualizada; correo pendiente", sendError);
+    }
+    await supabase
+      .from("withdrawal_requests")
+      .update({
+        resolution_email_sent_at: emailSent ? new Date().toISOString() : null,
+        resolution_email_error: emailSent ? null : emailError,
+        archived_at:
+          emailSent && archiveAfterReply ? new Date().toISOString() : null,
+      })
+      .eq("id", requestRow.id);
     if (requestRow.user_id) {
       await supabase.from("user_notifications").insert({
         user_id: requestRow.user_id,
@@ -89,7 +108,17 @@ Deno.serve(async (req: Request) => {
         order_id: requestRow.order_id,
       });
     }
-    return Response.json({ updated: true }, { headers: cors });
+    return Response.json(
+      {
+        updated: true,
+        emailSent,
+        archived: emailSent && archiveAfterReply,
+        warning: emailSent
+          ? null
+          : "La respuesta quedó guardada, pero el correo al cliente no se envió",
+      },
+      { headers: cors },
+    );
   } catch (error) {
     return Response.json(
       { error: error instanceof Error ? error.message : "Error interno" },

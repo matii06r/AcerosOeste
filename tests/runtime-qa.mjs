@@ -73,6 +73,13 @@ const feedbackMigration = readFileSync(
   ),
   "utf8",
 );
+const emailArchiveMigration = readFileSync(
+  new URL(
+    "supabase/migrations/019_email_delivery_and_admin_archives.sql",
+    root,
+  ),
+  "utf8",
+);
 const withdrawalFunction = readFileSync(
   new URL("supabase/functions/create-withdrawal-request/index.ts", root),
   "utf8",
@@ -83,6 +90,14 @@ const invoiceEmailFunction = readFileSync(
 );
 const feedbackFunction = readFileSync(
   new URL("supabase/functions/send-feedback/index.ts", root),
+  "utf8",
+);
+const retryFeedbackFunction = readFileSync(
+  new URL("supabase/functions/retry-feedback-email/index.ts", root),
+  "utf8",
+);
+const updateWithdrawalFunction = readFileSync(
+  new URL("supabase/functions/update-withdrawal-request/index.ts", root),
   "utf8",
 );
 const adminNotificationFunction = readFileSync(
@@ -366,7 +381,7 @@ const executable = html
   .replace('<script src="assets/vendor/supabase.js?v=1"></script>', "")
   .replace('<script src="config.js"></script>', "")
   .replace(
-    '<script src="app.js?v=25"></script>',
+    '<script src="app.js?v=26"></script>',
     `<script>${app.replaceAll("</script>", "<\\/script>")}</script>`,
   );
 const errors = [];
@@ -1013,6 +1028,39 @@ assert(
   "Las sugerencias moderadas o el archivado seguro de pedidos están incompletos",
 );
 assert(
+  emailArchiveMigration.includes("add column if not exists email_error") &&
+    emailArchiveMigration.includes("add column if not exists archived_at") &&
+    emailArchiveMigration.includes("add column if not exists billing_archived_at") &&
+    emailArchiveMigration.includes("add column if not exists feedback_id") &&
+    emailArchiveMigration.includes("new.id"),
+  "La migración no conserva el estado real de correos o el archivo administrativo",
+);
+assert(
+  feedbackFunction.includes("emailSent: false") &&
+    feedbackFunction.includes("email_error") &&
+    feedbackFunction.includes("feedbackId: feedback.id") &&
+    retryFeedbackFunction.includes('profile?.role !== "admin"') &&
+    retryFeedbackFunction.includes("sendTransactionalEmail") &&
+    app.includes("openFeedbackNotification") &&
+    app.includes('"retry-feedback-email"') &&
+    app.includes("El aviso por correo está temporalmente pendiente") &&
+    sharedEmailFunction.includes("La API key de Resend es inválida o fue revocada") &&
+    !sharedEmailFunction.includes('throw new Error(`Email rechazado:'),
+  "El seguimiento y reintento real de sugerencias por correo está incompleto",
+);
+assert(
+  app.includes('.is("billing_archived_at", null)') &&
+    app.includes("archiveBillingOrder") &&
+    app.includes('data-archive-billing=') &&
+    app.includes('.is("archived_at", null)') &&
+    app.includes("archiveWithdrawalRequest") &&
+    app.includes("archiveAfterReply") &&
+    updateWithdrawalFunction.includes("resolution_email_sent_at") &&
+    updateWithdrawalFunction.includes("resolution_email_error") &&
+    updateWithdrawalFunction.includes("emailSent && archiveAfterReply"),
+  "El archivo seguro de facturación o arrepentimientos está incompleto",
+);
+assert(
   !app.includes("El importe se vuelve a calcular de forma segura en el servidor") &&
     !app.includes("Modo asistido</b>") &&
     app.includes("Necesito el comprobante con CUIT o razón social"),
@@ -1070,5 +1118,5 @@ if (errors.length) {
   process.exit(1);
 }
 console.log(
-  "QA OK: tienda, checkout limpio, archivado seguro, sugerencias y facturación",
+  "QA OK: tienda, correo verificable, archivo seguro, sugerencias y facturación",
 );

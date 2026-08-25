@@ -102,19 +102,44 @@ Deno.serve(async (req: Request) => {
 
     const adminEmail =
       Deno.env.get("ADMIN_EMAIL") || "gestionacerosoestee@gmail.com";
-    await sendTransactionalEmail({
-      to: adminEmail,
-      bccAdmin: false,
-      replyTo: email,
-      subject: `Sugerencia sobre ${categoryLabels[category]} — ${name}`,
-      html: `<div style="font-family:Arial,sans-serif;max-width:640px;margin:auto;background:#07111c;color:#eef4fa;padding:32px;border-radius:12px"><p style="color:#f56b18;font-weight:700;letter-spacing:1px">ACEROS OESTE</p><h1>Nueva sugerencia</h1><div style="padding:18px;background:#101d2a;border-left:4px solid #f56b18;border-radius:8px"><p><b>De:</b> ${escapeHtml(name)}</p><p><b>Email:</b> ${escapeHtml(email)}</p><p><b>Tema:</b> ${escapeHtml(categoryLabels[category])}</p>${orderReference ? `<p><b>Pedido:</b> ${escapeHtml(orderReference)}</p>` : ""}<p style="white-space:pre-wrap;line-height:1.7">${escapeHtml(message)}</p></div><p style="color:#8fa1b1;font-size:12px">Podés responder este correo para contactar a la persona.</p></div>`,
-    });
-    await supabase
-      .from("feedback_submissions")
-      .update({ email_sent_at: new Date().toISOString() })
-      .eq("id", feedback.id);
-
-    return Response.json({ received: true }, { headers: cors });
+    try {
+      await sendTransactionalEmail({
+        to: adminEmail,
+        bccAdmin: false,
+        replyTo: email,
+        subject: `Sugerencia sobre ${categoryLabels[category]} — ${name}`,
+        html: `<div style="font-family:Arial,sans-serif;max-width:640px;margin:auto;background:#07111c;color:#eef4fa;padding:32px;border-radius:12px"><p style="color:#f56b18;font-weight:700;letter-spacing:1px">ACEROS OESTE</p><h1>Nueva sugerencia</h1><div style="padding:18px;background:#101d2a;border-left:4px solid #f56b18;border-radius:8px"><p><b>De:</b> ${escapeHtml(name)}</p><p><b>Email:</b> ${escapeHtml(email)}</p><p><b>Tema:</b> ${escapeHtml(categoryLabels[category])}</p>${orderReference ? `<p><b>Pedido:</b> ${escapeHtml(orderReference)}</p>` : ""}<p style="white-space:pre-wrap;line-height:1.7">${escapeHtml(message)}</p></div><p style="color:#8fa1b1;font-size:12px">Podés responder este correo para contactar a la persona.</p></div>`,
+      });
+      await supabase
+        .from("feedback_submissions")
+        .update({
+          email_sent_at: new Date().toISOString(),
+          email_error: null,
+        })
+        .eq("id", feedback.id);
+      return Response.json(
+        { received: true, emailSent: true, feedbackId: feedback.id },
+        { headers: cors },
+      );
+    } catch (emailError) {
+      const emailMessage =
+        emailError instanceof Error ? emailError.message : "Correo no enviado";
+      console.error("Sugerencia guardada; correo pendiente", emailError);
+      await supabase
+        .from("feedback_submissions")
+        .update({ email_error: emailMessage.slice(0, 500) })
+        .eq("id", feedback.id);
+      return Response.json(
+        {
+          received: true,
+          emailSent: false,
+          feedbackId: feedback.id,
+          warning:
+            "La sugerencia quedó guardada, pero el correo de gestión está pendiente",
+        },
+        { headers: cors },
+      );
+    }
   } catch (error) {
     return Response.json(
       { error: error instanceof Error ? error.message : "No se pudo enviar la sugerencia" },

@@ -30,7 +30,13 @@ export async function sendTransactionalEmail(input: EmailInput) {
     }),
   });
   if (!response.ok) {
-    throw new Error(`Email rechazado: ${await response.text()}`);
+    const detail = await response.text();
+    if (
+      response.status === 401 ||
+      /api key is invalid|api key is not active/i.test(detail)
+    )
+      throw new Error("La API key de Resend es inválida o fue revocada");
+    throw new Error(`Resend rechazó el correo (${response.status})`);
   }
 }
 
