@@ -18,6 +18,24 @@ Deno.serve(async (req: Request) => {
       throw new Error("Tipo de pago inválido");
     if (!customer?.name || !customer?.email || !customer?.phone)
       throw new Error("Faltan datos del comprador");
+    const billing = customer?.billing || {};
+    const billingCondition = String(
+      billing.condition || "consumer_final",
+    );
+    if (
+      ![
+        "consumer_final",
+        "monotributista",
+        "responsable_inscripto",
+        "exento",
+      ].includes(billingCondition)
+    )
+      throw new Error("Condición fiscal inválida");
+    if (
+      billingCondition !== "consumer_final" &&
+      (!billing.name || !billing.documentNumber)
+    )
+      throw new Error("Completá la razón social y el CUIT para facturar");
     const mpAccessToken = Deno.env.get("MP_ACCESS_TOKEN") || "";
     if (!mpAccessToken)
       throw new Error("Mercado Pago no está configurado");
@@ -43,7 +61,7 @@ Deno.serve(async (req: Request) => {
     const ids = items.map((i: { productId: string }) => i.productId);
     const { data: products, error } = await supabase
       .from("products")
-      .select("id,name,price,stock_quantity,images")
+      .select("id,name,price,stock_quantity,images,sale_type")
       .in("id", ids)
       .eq("is_active", true);
     if (error) throw error;
@@ -79,12 +97,38 @@ Deno.serve(async (req: Request) => {
         customer_name: customer.name,
         customer_email: customer.email,
         customer_phone: customer.phone,
+        billing_condition: billingCondition,
+        billing_name: String(billing.name || customer.name).trim(),
+        billing_document_type: String(
+          billing.documentType ||
+            (billingCondition === "consumer_final" ? "DNI" : "CUIT"),
+        ).trim(),
+        billing_document_number:
+          String(billing.documentNumber || "").replace(/[^0-9]/g, "") || null,
+        billing_address: String(billing.address || "").trim() || null,
+        billing_status: "pending",
       })
       .select()
       .single();
     if (orderError) throw orderError;
+    const { data: defaultSettings } = await supabase
+      .from("store_settings")
+      .select("vat_rate")
+      .eq("id", 1)
+      .single();
+    const defaultVatRate = Number(defaultSettings?.vat_rate ?? 21);
+    const { data: pricingRows } = await supabase
+      .from("product_pricing")
+      .select("product_id,vat_rate")
+      .in("product_id", ids);
+    const vatByProduct = new Map(
+      (pricingRows || []).map((row) => [row.product_id, Number(row.vat_rate)]),
+    );
     const { error: itemsError } = await supabase.from("order_items").insert(
-      normalized.map((x) => ({
+      normalized.map((x) => {
+        const vatRate = vatByProduct.get(x.id) ?? defaultVatRate;
+        const unitNetPrice = Number(x.price) / (1 + vatRate / 100);
+        return {
         order_id: order.id,
         product_id: x.id,
         product_name: x.name,
@@ -93,7 +137,13 @@ Deno.serve(async (req: Request) => {
         unit_price: x.price,
         quantity: x.quantity,
         subtotal: x.subtotal,
-      })),
+        sale_type: x.sale_type || "standard",
+        unit_net_price: Math.round(unitNetPrice * 100) / 100,
+        vat_rate: vatRate,
+        unit_vat_amount:
+          Math.round((Number(x.price) - unitNetPrice) * 100) / 100,
+        };
+      }),
     );
     if (itemsError) {
       await supabase.from("orders").delete().eq("id", order.id);

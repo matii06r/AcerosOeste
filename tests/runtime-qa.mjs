@@ -59,6 +59,21 @@ const customerNotificationsMigration = readFileSync(
   new URL("supabase/migrations/016_customer_order_notifications.sql", root),
   "utf8",
 );
+const billingMigration = readFileSync(
+  new URL(
+    "supabase/migrations/017_withdrawals_and_assisted_billing.sql",
+    root,
+  ),
+  "utf8",
+);
+const withdrawalFunction = readFileSync(
+  new URL("supabase/functions/create-withdrawal-request/index.ts", root),
+  "utf8",
+);
+const invoiceEmailFunction = readFileSync(
+  new URL("supabase/functions/send-invoice-email/index.ts", root),
+  "utf8",
+);
 const adminNotificationFunction = readFileSync(
   new URL("supabase/functions/send-admin-notification/index.ts", root),
   "utf8",
@@ -340,7 +355,7 @@ const executable = html
   .replace('<script src="assets/vendor/supabase.js?v=1"></script>', "")
   .replace('<script src="config.js"></script>', "")
   .replace(
-    '<script src="app.js?v=23"></script>',
+    '<script src="app.js?v=24"></script>',
     `<script>${app.replaceAll("</script>", "<\\/script>")}</script>`,
   );
 const errors = [];
@@ -491,7 +506,7 @@ assert(Boolean(d.querySelector("#usersBtn")), "Falta la pestaña Usuarios");
 assert(Boolean(d.querySelector("#chatsBtn")), "Falta la pestaña Chats");
 assert(
   Boolean(d.querySelector(".admin-shell .admin-sidebar")) &&
-    d.querySelectorAll(".admin-side-nav [data-admin-route]").length === 8,
+    d.querySelectorAll(".admin-side-nav [data-admin-route]").length === 10,
   "El panel no usa el menú lateral completo",
 );
 rows.profiles = [
@@ -938,6 +953,43 @@ assert(
     !app.includes("Mostramos productos de referencia"),
   "El catálogo todavía puede reemplazarse por cuatro productos de muestra",
 );
+assert(
+  html.includes("consumer-rights-bar") &&
+    html.includes('href="#arrepentimiento">BOTÓN DE ARREPENTIMIENTO') &&
+    html.includes('id="arrepentimiento"') &&
+    app.includes('"create-withdrawal-request"') &&
+    withdrawalFunction.includes('status: "submitted"') &&
+    withdrawalFunction.includes("requestCode"),
+  "El botón o el circuito público de arrepentimiento está incompleto",
+);
+assert(
+  billingMigration.includes("create table if not exists public.withdrawal_requests") &&
+    billingMigration.includes("create table if not exists public.invoices") &&
+    billingMigration.includes("create table if not exists public.product_pricing") &&
+    billingMigration.includes("invoice-documents") &&
+    billingMigration.includes("withdrawal_notify_admin") &&
+    billingMigration.includes("invoice_notify_customer"),
+  "La migración fiscal y de arrepentimiento está incompleta",
+);
+assert(
+  paymentFunction.includes("billing_condition") &&
+    paymentFunction.includes("billing_document_number") &&
+    paymentFunction.includes("unit_net_price") &&
+    paymentFunction.includes("vat_rate") &&
+    paymentFunction.includes('select("id,name,price,stock_quantity,images,sale_type")'),
+  "El checkout no conserva datos fiscales y snapshots del producto",
+);
+assert(
+  app.includes("suggestedFinalPrice") &&
+    app.includes("Costo de cobro estimado") &&
+    app.includes("El precio cobrado ya es final") &&
+    app.includes("openAdminInvoices") &&
+    app.includes("openAdminWithdrawals") &&
+    app.includes("invoice-documents") &&
+    invoiceEmailFunction.includes("createSignedUrl") &&
+    invoiceEmailFunction.includes("Tu factura está disponible"),
+  "La calculadora o la facturación asistida no está completa",
+);
 await authListener?.("SIGNED_OUT", null);
 await new Promise((resolve) => setTimeout(resolve, 30));
 activeSession = {
@@ -990,5 +1042,5 @@ if (errors.length) {
   process.exit(1);
 }
 console.log(
-  "QA OK: perfiles, catálogo completo, notificaciones, emails y confirmaciones",
+  "QA OK: tienda, precios finales, facturación asistida y arrepentimiento",
 );

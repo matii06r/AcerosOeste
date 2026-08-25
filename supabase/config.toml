@@ -14,3 +14,12 @@ verify_jwt = false
 
 [functions.send-admin-notification]
 verify_jwt = false
+
+[functions.create-withdrawal-request]
+verify_jwt = false
+
+[functions.update-withdrawal-request]
+verify_jwt = false
+
+[functions.send-invoice-email]
+verify_jwt = false

@@ -110,6 +110,12 @@ const state = {
     deposit_percentage: 50,
     freight_whatsapp: "5491134322199",
     contact_email: ADMIN_CONTACT_EMAIL,
+    vat_rate: 21,
+    payment_fee_rate: 7,
+    commercial_margin_rate: 0,
+    pricing_rounding: 100,
+    invoice_mode: "assisted",
+    issuer_tax_status: "pending_accountant",
   },
   user: null,
   profile: null,
@@ -305,7 +311,34 @@ function mapProduct(row) {
     images: Array.isArray(row.images) ? row.images : [],
     sku: row.sku || "",
     active: row.is_active,
+    saleType: row.sale_type || "standard",
   };
+}
+
+function saleTypeLabel(value) {
+  return (
+    {
+      standard: "Producto estándar",
+      customizable: "Estándar personalizable",
+      made_to_order: "Fabricado a medida",
+    }[value] || "Producto estándar"
+  );
+}
+
+function suggestedFinalPrice({
+  baseNetPrice,
+  vatRate,
+  paymentFeeRate,
+  commercialMarginRate,
+  roundingUnit,
+}) {
+  const base = Math.max(0, Number(baseNetPrice) || 0);
+  const vat = Math.max(0, Number(vatRate) || 0) / 100;
+  const fee = Math.min(0.99, Math.max(0, Number(paymentFeeRate) || 0) / 100);
+  const margin = Math.max(0, Number(commercialMarginRate) || 0) / 100;
+  const raw = (base * (1 + margin) * (1 + vat)) / (1 - fee);
+  const rounding = Math.max(0, Number(roundingUnit) || 0);
+  return rounding ? Math.ceil(raw / rounding) * rounding : Math.round(raw * 100) / 100;
 }
 
 function restoreStoreCache() {
@@ -484,6 +517,10 @@ function notificationTarget(notification) {
     );
     if (product) return `/#producto/${encodeURIComponent(product.slug)}`;
   }
+  if (isAdmin() && notification?.type === "withdrawal")
+    return "/#panel-general";
+  if (isAdmin() && notification?.type === "invoice")
+    return "/#panel-general";
   return isAdmin() ? "/#panel-general" : "/#cuenta";
 }
 async function showDeviceNotification(notification) {
@@ -530,7 +567,14 @@ function renderNotificationCenter() {
   count.textContent = unread > 99 ? "99+" : String(unread);
   count.classList.toggle("hidden", unread === 0);
   const icon = (type) =>
-    ({ question: "?", message: "…", sale: "$", order: "✓" })[type] || "•";
+    ({
+      question: "?",
+      message: "…",
+      sale: "$",
+      order: "✓",
+      withdrawal: "↩",
+      invoice: "F",
+    })[type] || "•";
   dropdown.innerHTML = `<header><div><b>Notificaciones</b><small>${unread ? `${unread} nueva${unread === 1 ? "" : "s"}` : "Todo al día"}</small></div>${state.notifications.length ? '<button id="readAllNotifications" type="button">Limpiar todo</button>' : ""}</header>${"Notification" in window && Notification.permission !== "granted" ? '<button id="enableDeviceNotifications" class="notification-permission" type="button"><b>Activar avisos en este dispositivo</b><small>Recibilos en la computadora o el celular mientras la tienda esté activa.</small></button>' : ""}<div class="notification-list">${state.notifications.length ? state.notifications.map((item) => `<button class="notification-item ${item.is_read ? "" : "unread"}" data-notification-id="${escapeHtml(item.id)}" type="button"><i>${icon(item.type)}</i><span><b>${escapeHtml(item.title)}</b><small>${escapeHtml(item.body)}</small><time>${new Date(item.created_at).toLocaleString("es-AR", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}</time></span></button>`).join("") : '<p class="notification-empty">No hay notificaciones nuevas.</p>'}</div>`;
   document.querySelector("#enableDeviceNotifications")?.addEventListener(
     "click",
@@ -686,6 +730,18 @@ async function openNotification(notification) {
     await openAdminOrders();
     return;
   }
+  if (notification.type === "withdrawal") {
+    state.adminView = "withdrawals";
+    renderAdminPanel({ openSection: false });
+    await openAdminWithdrawals();
+    return;
+  }
+  if (notification.type === "invoice") {
+    state.adminView = "invoices";
+    renderAdminPanel({ openSection: false });
+    await openAdminInvoices();
+    return;
+  }
   state.adminView = "chats";
   renderAdminPanel({ openSection: false });
   if (notification.type === "message" && notification.conversation_id) {
@@ -745,6 +801,23 @@ function startAppRealtime() {
       "postgres_changes",
       { event: "*", schema: "public", table },
       () => scheduleRealtimeRefresh("orders", refreshOrdersFromRealtime),
+    ),
+  );
+  ["invoices", "withdrawal_requests"].forEach((table) =>
+    channel.on(
+      "postgres_changes",
+      { event: "*", schema: "public", table },
+      () => {
+        const hash = decodeURIComponent(location.hash.slice(1));
+        if (isAdmin() && hash === "panel-general") {
+          if (state.adminView === "invoices")
+            scheduleRealtimeRefresh("invoices", openAdminInvoices);
+          if (state.adminView === "withdrawals")
+            scheduleRealtimeRefresh("withdrawals", openAdminWithdrawals);
+        } else if (state.user && hash === "cuenta") {
+          scheduleRealtimeRefresh("customer-documents", loadOrders);
+        }
+      },
     ),
   );
   channel
@@ -1047,7 +1120,7 @@ async function showProductPage(slug) {
     '<div class="empty">Cargando producto…</div>';
   const questions = await loadQuestions(product.id);
   page.querySelector("#productPageContent").innerHTML =
-    `<div class="product-page-layout">${productGallery(product)}<div class="product-page-info"><p class="eyebrow orange">${escapeHtml(product.category)}</p><h1>${escapeHtml(product.name)}</h1><div class="price">${money(product.price)}</div><div class="stock-line"><span class="badge ${product.stock < 3 ? "low" : ""}" style="position:static">${product.stock ? `${product.stock} unidades disponibles` : "Fabricación a pedido"}</span><small>SKU ${escapeHtml(product.sku)}</small></div><p>${escapeHtml(product.desc)}</p><div class="product-specs"><div><b>Material</b><br>Acero inoxidable</div><div><b>Fabricación</b><br>Nacional</div><div><b>Medidas</b><br>Estándar o a medida</div><div><b>Entrega</b><br>A coordinar</div></div><p>${escapeHtml(product.details)}</p><div class="stack"><button class="btn cta" data-add="${product.id}" ${!product.stock ? "disabled" : ""}>Agregar al carrito</button><a class="btn secondary" target="_blank" rel="noopener" href="https://wa.me/${state.settings.sales_whatsapp || "5491134322199"}?text=${encodeURIComponent("Hola Acerosoeste, quiero consultar por " + product.name)}">Consultar por WhatsApp</a>${isAdmin() && !String(product.id).startsWith("demo-") ? `<button class="btn outline" data-edit="${product.id}">Editar producto</button>` : ""}</div></div></div><div class="questions"><p class="eyebrow orange">PREGUNTAS</p><h2>Preguntá lo que necesitás saber</h2>${state.user ? `<form id="questionForm" class="question-form"><input name="question" maxlength="500" placeholder="Escribí tu pregunta sobre este producto..." required><button class="btn cta">Preguntar</button></form>` : '<div class="notice">Iniciá sesión para publicar una pregunta.</div>'}<div class="question-list">${renderQuestionList(questions)}</div></div>`;
+    `<div class="product-page-layout">${productGallery(product)}<div class="product-page-info"><p class="eyebrow orange">${escapeHtml(product.category)}</p><h1>${escapeHtml(product.name)}</h1><div class="price">${money(product.price)}</div><small class="final-price-note">Precio final al público · impuestos incluidos</small><div class="stock-line"><span class="badge ${product.stock < 3 ? "low" : ""}" style="position:static">${product.stock ? `${product.stock} unidades disponibles` : "Fabricación a pedido"}</span><small>SKU ${escapeHtml(product.sku)}</small></div><p>${escapeHtml(product.desc)}</p><div class="product-specs"><div><b>Material</b><br>Acero inoxidable</div><div><b>Fabricación</b><br>Nacional</div><div><b>Modalidad</b><br>${escapeHtml(saleTypeLabel(product.saleType))}</div><div><b>Entrega</b><br>A coordinar</div></div><p>${escapeHtml(product.details)}</p><div class="product-legal-note">${product.saleType === "standard" ? "Producto estándar sujeto a las condiciones de compra y al derecho de arrepentimiento cuando corresponda." : "Este producto puede fabricarse siguiendo medidas o especificaciones particulares. Las condiciones se informarán y aprobarán antes de iniciar la fabricación."}</div><div class="stack"><button class="btn cta" data-add="${product.id}" ${!product.stock ? "disabled" : ""}>Agregar al carrito</button><a class="btn secondary" target="_blank" rel="noopener" href="https://wa.me/${state.settings.sales_whatsapp || "5491134322199"}?text=${encodeURIComponent("Hola Acerosoeste, quiero consultar por " + product.name)}">Consultar por WhatsApp</a>${isAdmin() && !String(product.id).startsWith("demo-") ? `<button class="btn outline" data-edit="${product.id}">Editar producto</button>` : ""}</div></div></div><div class="questions"><p class="eyebrow orange">PREGUNTAS</p><h2>Preguntá lo que necesitás saber</h2>${state.user ? `<form id="questionForm" class="question-form"><input name="question" maxlength="500" placeholder="Escribí tu pregunta sobre este producto..." required><button class="btn cta">Preguntar</button></form>` : '<div class="notice">Iniciá sesión para publicar una pregunta.</div>'}<div class="question-list">${renderQuestionList(questions)}</div></div>`;
   document.querySelectorAll("[data-media]").forEach((button) => {
     button.onclick = () => {
       const url = button.dataset.media;
@@ -1197,6 +1270,9 @@ function handleRoute() {
     renderAdminPanel();
   } else if (route === "politicas") {
     showStandalonePage("#politicas");
+  } else if (route === "arrepentimiento") {
+    showStandalonePage("#arrepentimiento");
+    renderWithdrawalPage();
   } else if (emailConfirmed) {
     showStandalonePage("#cuenta");
     renderAccount();
@@ -1226,6 +1302,39 @@ async function renderCheckoutStatus(hash) {
     );
     syncPaidCheckoutCart({ notify: true });
   }
+}
+
+function renderWithdrawalPage() {
+  const content = document.querySelector("#withdrawalContent");
+  if (!content) return;
+  const params = new URLSearchParams(location.hash.split("?")[1] || "");
+  content.innerHTML = `<div class="withdrawal-intro"><p class="eyebrow orange">DERECHO DE ARREPENTIMIENTO</p><h1>Solicitá la revisión de tu compra</h1><p>Podés iniciar la solicitud sin registrarte ni iniciar sesión. Ingresá el código visible en tu compra o en el correo de confirmación y el mismo email utilizado al pagar.</p></div><form id="withdrawalForm" class="withdrawal-form"><div class="field"><label>Código del pedido</label><input name="orderCode" minlength="8" maxlength="36" value="${escapeHtml(params.get("pedido") || "")}" placeholder="Ej.: A1B2C3D4" required><small>Podés escribir los primeros 8 caracteres.</small></div><div class="field"><label>Email de la compra</label><input name="email" type="email" value="${escapeHtml(state.user?.email || "")}" required></div><div class="field"><label>Teléfono de contacto</label><input name="phone" autocomplete="tel" value="${escapeHtml(state.profile?.phone || "")}"></div><div class="field full"><label>Contanos qué necesitás <span>(opcional)</span></label><textarea name="reason" maxlength="2000" rows="5" placeholder="Podés aclarar si recibiste el producto, el inconveniente o cualquier información útil."></textarea></div><div class="withdrawal-privacy field full"><b>¿Qué sucede después?</b><p>Registraremos la solicitud, te enviaremos un código de seguimiento y revisaremos si se trata de un producto estándar o fabricado según especificaciones particulares. Esta solicitud no limita garantías por defectos o diferencias respecto de lo acordado.</p></div><button class="btn cta field full" type="submit">Enviar solicitud</button></form>`;
+  document.querySelector("#withdrawalForm").onsubmit = submitWithdrawalRequest;
+}
+
+async function submitWithdrawalRequest(event) {
+  event.preventDefault();
+  const button = event.submitter;
+  const values = Object.fromEntries(new FormData(event.currentTarget));
+  setBusy(button, true, "Registrando…");
+  const { data, error } = await supabase.functions.invoke(
+    "create-withdrawal-request",
+    { body: values },
+  );
+  setBusy(button, false);
+  if (error || !data?.requestCode) {
+    let message = data?.error;
+    if (!message && error?.context?.json) {
+      try {
+        message = (await error.context.json())?.error;
+      } catch {
+        // La respuesta general cubre errores sin JSON.
+      }
+    }
+    return toast(message || error?.message || "No pudimos registrar la solicitud.", "error");
+  }
+  document.querySelector("#withdrawalContent").innerHTML = `<div class="withdrawal-success"><span>✓</span><p class="eyebrow orange">SOLICITUD RECIBIDA</p><h1>${escapeHtml(data.requestCode)}</h1><p>Guardá este código. Te enviamos la confirmación al email de la compra y administración ya recibió el aviso.</p><a class="btn cta" href="#inicio">Volver a la tienda</a></div>`;
+  window.scrollTo(0, 0);
 }
 
 function addToCart(id) {
@@ -1380,7 +1489,7 @@ async function openCheckout(event) {
     document.querySelector("[name=paymentType]:checked")?.value || "full";
   closeCart();
   openModal(
-    `<button class="modal-close" data-close>×</button><p class="eyebrow orange">PAGO SEGURO</p><h2>Datos para tu pedido</h2><form id="checkoutForm" class="form-grid"><div class="field full"><label>Nombre completo</label><input name="name" value="${escapeHtml(state.profile?.full_name || "")}" required></div><div class="field"><label>Email de la cuenta</label><input name="email" type="email" value="${escapeHtml(state.user?.email || "")}" readonly required></div><div class="field"><label>Teléfono</label><input name="phone" value="${escapeHtml(state.profile?.phone || "")}" required></div><input name="paymentType" type="hidden" value="${paymentType}"><button class="btn cta field full" type="submit">Continuar a Mercado Pago</button></form><p><small>El importe se vuelve a calcular de forma segura en el servidor.</small></p>`,
+    `<button class="modal-close" data-close>×</button><p class="eyebrow orange">PAGO SEGURO</p><h2>Datos para tu pedido</h2><form id="checkoutForm" class="form-grid"><div class="field full"><label>Nombre completo</label><input name="name" value="${escapeHtml(state.profile?.full_name || "")}" required></div><div class="field"><label>Email de la cuenta</label><input name="email" type="email" value="${escapeHtml(state.user?.email || "")}" readonly required></div><div class="field"><label>Teléfono</label><input name="phone" value="${escapeHtml(state.profile?.phone || "")}" required></div><div class="field full checkout-divider"><b>Datos de facturación</b><small>El precio mostrado ya es final e incluye los impuestos configurados. No se agregará IVA después del pago.</small></div><div class="field"><label>Condición fiscal</label><select name="billingCondition" id="billingCondition"><option value="consumer_final">Consumidor final</option><option value="monotributista">Monotributista</option><option value="responsable_inscripto">Responsable inscripto</option><option value="exento">Exento</option></select></div><div class="field"><label>Nombre o razón social</label><input name="billingName" value="${escapeHtml(state.profile?.full_name || "")}"></div><div class="field"><label>Tipo de documento</label><select name="billingDocumentType"><option value="DNI">DNI</option><option value="CUIT">CUIT</option><option value="CUIL">CUIL</option></select></div><div class="field"><label>DNI o CUIT</label><input name="billingDocumentNumber" inputmode="numeric" maxlength="14" placeholder="Sin puntos ni guiones"></div><div class="field full"><label>Domicilio de facturación</label><input name="billingAddress" autocomplete="street-address" placeholder="Calle, número, localidad y provincia"></div><input name="paymentType" type="hidden" value="${paymentType}"><button class="btn cta field full" type="submit">Continuar a Mercado Pago</button></form><p><small>El importe se vuelve a calcular de forma segura en el servidor.</small></p>`,
   );
   document.querySelector("#checkoutForm").onsubmit = startPayment;
 }
@@ -1388,6 +1497,12 @@ async function startPayment(event) {
   event.preventDefault();
   const button = event.submitter,
     form = Object.fromEntries(new FormData(event.target));
+  if (
+    form.billingCondition !== "consumer_final" &&
+    (!String(form.billingName || "").trim() ||
+      !String(form.billingDocumentNumber || "").replace(/\D/g, ""))
+  )
+    return toast("Completá la razón social y el CUIT para facturar.", "error");
   const adjusted = reconcileCart();
   const checkoutLines = cartLines();
   renderCartCount();
@@ -1423,7 +1538,18 @@ async function startPayment(event) {
           quantity: item.qty,
         })),
         paymentType: form.paymentType,
-        customer: { name: form.name, email: form.email, phone: form.phone },
+        customer: {
+          name: form.name,
+          email: form.email,
+          phone: form.phone,
+          billing: {
+            condition: form.billingCondition,
+            name: form.billingName,
+            documentType: form.billingDocumentType,
+            documentNumber: form.billingDocumentNumber,
+            address: form.billingAddress,
+          },
+        },
       },
     },
   );
@@ -1795,13 +1921,25 @@ function orderPaymentSummary(order) {
 }
 function customerOrderMarkup(order) {
   const items = order.order_items || [];
-  return `<article class="purchase-card" data-customer-order="${order.id}"><header><div><small>${new Date(order.created_at).toLocaleDateString("es-AR")}</small><h2>${escapeHtml(orderProductsLabel(order) || "Compra en Aceros Oeste")}</h2></div><span class="order-status status-${escapeHtml(order.status)}">${statusLabel(order.status)}</span></header><div class="purchase-products">${items.map((item) => { const image = orderItemImage(item); return `<div class="purchase-product"><div class="purchase-product-image">${image ? `<img src="${escapeHtml(image)}" alt="${escapeHtml(item.product_name || "Producto")}">` : `<span>${escapeHtml(String(item.product_name || "P").slice(0, 1))}</span>`}</div><div><b>${escapeHtml(item.product_name || "Producto")}</b><small>${Math.max(1, Number(item.quantity) || 1)} unidad${Number(item.quantity) === 1 ? "" : "es"} · ${money(item.unit_price || item.subtotal)}</small></div></div>`; }).join("")}</div>${orderProgressMarkup(order.status)}${orderPaymentSummary(order)}<div class="purchase-actions">${!["cancelled", "fulfilled"].includes(order.status) ? `<button class="btn cta" data-customer-order-chat="${order.id}" type="button">Hablar sobre esta compra</button>` : ""}${["cancelled", "fulfilled"].includes(order.status) ? `<button class="btn outline" data-hide-order="${order.id}" type="button">Quitar de mi cuenta</button>` : ""}</div></article>`;
+  const invoices = (order.invoices || []).filter(
+    (invoice) => invoice.pdf_path && ["authorized", "sent"].includes(invoice.status),
+  );
+  const invoiceBlock = invoices.length
+    ? `<div class="purchase-documents"><b>Comprobantes</b>${invoices.map((invoice) => `<button class="invoice-download" type="button" data-invoice-path="${escapeHtml(invoice.pdf_path)}"><span>PDF</span><div><b>${escapeHtml(invoice.invoice_type)}</b><small>${invoice.invoice_number ? `${String(invoice.point_of_sale || 0).padStart(5, "0")}-${String(invoice.invoice_number).padStart(8, "0")}` : "Comprobante disponible"} · ${money(invoice.gross_amount)}</small></div><i>Descargar</i></button>`).join("")}</div>`
+    : `<div class="purchase-invoice-pending"><span>Factura</span><small>${order.billing_status === "pending" ? "Pendiente de emisión" : "En preparación"}</small></div>`;
+  const withdrawal = (order.withdrawal_requests || []).find(
+    (request) => !["rejected", "closed"].includes(request.status),
+  ) || (order.withdrawal_requests || [])[0];
+  const withdrawalBlock = withdrawal
+    ? `<div class="purchase-withdrawal-status"><span><b>${escapeHtml(withdrawal.request_code)}</b><small>Solicitud de arrepentimiento</small></span><strong>${escapeHtml(withdrawalStatusLabel(withdrawal.status))}</strong></div>`
+    : "";
+  return `<article class="purchase-card" data-customer-order="${order.id}"><header><div><small>${new Date(order.created_at).toLocaleDateString("es-AR")}</small><h2>${escapeHtml(orderProductsLabel(order) || "Compra en Aceros Oeste")}</h2></div><span class="order-status status-${escapeHtml(order.status)}">${statusLabel(order.status)}</span></header><div class="purchase-products">${items.map((item) => { const image = orderItemImage(item); return `<div class="purchase-product"><div class="purchase-product-image">${image ? `<img src="${escapeHtml(image)}" alt="${escapeHtml(item.product_name || "Producto")}">` : `<span>${escapeHtml(String(item.product_name || "P").slice(0, 1))}</span>`}</div><div><b>${escapeHtml(item.product_name || "Producto")}</b><small>${Math.max(1, Number(item.quantity) || 1)} unidad${Number(item.quantity) === 1 ? "" : "es"} · ${money(item.unit_price || item.subtotal)}</small></div></div>`; }).join("")}</div>${orderProgressMarkup(order.status)}${orderPaymentSummary(order)}${invoiceBlock}${withdrawalBlock}<div class="purchase-actions">${withdrawal ? "" : `<a class="btn outline" href="#arrepentimiento?pedido=${encodeURIComponent(String(order.id).slice(0, 8))}">Solicitar arrepentimiento</a>`}${!["cancelled", "fulfilled"].includes(order.status) ? `<button class="btn cta" data-customer-order-chat="${order.id}" type="button">Hablar sobre esta compra</button>` : ""}${["cancelled", "fulfilled"].includes(order.status) ? `<button class="btn outline" data-hide-order="${order.id}" type="button">Quitar de mi cuenta</button>` : ""}</div></article>`;
 }
 async function loadOrders() {
   if (!state.user || isAdmin()) return;
   const { data, error } = await supabase
     .from("orders")
-    .select("*, order_items(*)")
+    .select("*, order_items(*), invoices(*), withdrawal_requests(*)")
     .in("status", ["deposit_paid", "paid", "in_transit", "fulfilled", "cancelled"])
     .order("created_at", { ascending: false });
   const el = document.querySelector("#ordersList");
@@ -1830,7 +1968,21 @@ async function loadOrders() {
         ),
       );
   });
+  document.querySelectorAll("[data-invoice-path]").forEach((button) => {
+    button.onclick = () => downloadInvoice(button.dataset.invoicePath, button);
+  });
   await clearOrderNotifications(visibleOrders.map((order) => order.id));
+}
+
+async function downloadInvoice(path, button) {
+  setBusy(button, true, "Preparando…");
+  const { data, error } = await supabase.storage
+    .from("invoice-documents")
+    .createSignedUrl(path, 60 * 10);
+  setBusy(button, false);
+  if (error || !data?.signedUrl)
+    return toast("No pudimos preparar la factura.", "error");
+  window.open(data.signedUrl, "_blank", "noopener");
 }
 async function hideCustomerOrder(orderId, button) {
   if (
@@ -2096,7 +2248,7 @@ function renderAdminPanel({ openSection = true } = {}) {
   if (openSection) openAdminSection(state.adminView || "products");
 }
 function adminDashboard() {
-  return `<div class="admin-shell"><aside id="adminSidebar" class="admin-sidebar"><a class="admin-brand" href="#inicio"><img src="assets/logo-aceros-oeste.png" alt="Aceros Oeste"><span><b>ACEROS OESTE</b><small>Administración</small></span></a><nav class="admin-side-nav" aria-label="Panel de administración"><button class="admin-side-link primary" id="addProduct" data-admin-route="create-product" type="button"><i>＋</i><span>Crear producto</span></button><button class="admin-side-link" id="productsBtn" data-admin-route="products" type="button"><i>▤</i><span>Productos</span></button><button class="admin-side-link" id="usersBtn" data-admin-route="users" type="button"><i>●</i><span>Usuarios</span></button><button class="admin-side-link" id="categoriesBtn" data-admin-route="categories" type="button"><i>◇</i><span>Categorías</span></button><button class="admin-side-link" id="clientsBtn" data-admin-route="clients" type="button"><i>▧</i><span>Clientes y trabajos</span></button><button class="admin-side-link" id="chatsBtn" data-admin-route="chats" type="button"><i>▣</i><span>Chats</span></button><button class="admin-side-link" id="settingsBtn" data-admin-route="settings" type="button"><i>⚙</i><span>Configuración</span></button><button class="admin-side-link" id="ordersBtn" data-admin-route="orders" type="button"><i>▱</i><span>Pedidos</span></button></nav><div class="admin-sidebar-bottom"><a class="admin-side-link" href="#inicio"><i>←</i><span>Volver a la tienda</span></a><button class="admin-side-link" id="logout" type="button"><i>↪</i><span>Cerrar sesión</span></button></div></aside><main class="admin-main"><header class="admin-topbar"><button id="adminSidebarToggle" class="admin-sidebar-toggle" type="button" aria-label="Abrir menú">☰</button><div><small>PANEL GENERAL</small><b>${escapeHtml(state.profile?.full_name || "Administrador")}</b></div>${avatarMarkup(state.profile, "user-avatar admin-top-avatar")}</header><div id="adminWorkspace" class="admin-workspace"></div></main></div>`;
+  return `<div class="admin-shell"><aside id="adminSidebar" class="admin-sidebar"><a class="admin-brand" href="#inicio"><img src="assets/logo-aceros-oeste.png" alt="Aceros Oeste"><span><b>ACEROS OESTE</b><small>Administración</small></span></a><nav class="admin-side-nav" aria-label="Panel de administración"><button class="admin-side-link primary" id="addProduct" data-admin-route="create-product" type="button"><i>＋</i><span>Crear producto</span></button><button class="admin-side-link" id="productsBtn" data-admin-route="products" type="button"><i>▤</i><span>Productos</span></button><button class="admin-side-link" id="usersBtn" data-admin-route="users" type="button"><i>●</i><span>Usuarios</span></button><button class="admin-side-link" id="categoriesBtn" data-admin-route="categories" type="button"><i>◇</i><span>Categorías</span></button><button class="admin-side-link" id="clientsBtn" data-admin-route="clients" type="button"><i>▧</i><span>Clientes y trabajos</span></button><button class="admin-side-link" id="chatsBtn" data-admin-route="chats" type="button"><i>▣</i><span>Chats</span></button><button class="admin-side-link" id="ordersBtn" data-admin-route="orders" type="button"><i>▱</i><span>Pedidos</span></button><button class="admin-side-link" id="invoicesBtn" data-admin-route="invoices" type="button"><i>F</i><span>Facturación</span></button><button class="admin-side-link" id="withdrawalsBtn" data-admin-route="withdrawals" type="button"><i>↩</i><span>Arrepentimientos</span></button><button class="admin-side-link" id="settingsBtn" data-admin-route="settings" type="button"><i>⚙</i><span>Configuración</span></button></nav><div class="admin-sidebar-bottom"><a class="admin-side-link" href="#inicio"><i>←</i><span>Volver a la tienda</span></a><button class="admin-side-link" id="logout" type="button"><i>↪</i><span>Cerrar sesión</span></button></div></aside><main class="admin-main"><header class="admin-topbar"><button id="adminSidebarToggle" class="admin-sidebar-toggle" type="button" aria-label="Abrir menú">☰</button><div><small>PANEL GENERAL</small><b>${escapeHtml(state.profile?.full_name || "Administrador")}</b></div>${avatarMarkup(state.profile, "user-avatar admin-top-avatar")}</header><div id="adminWorkspace" class="admin-workspace"></div></main></div>`;
 }
 function adminProductsMarkup() {
   return `<div class="admin-page-head"><div><p class="eyebrow orange">CATÁLOGO</p><h1>Productos</h1><p>Administrá precios, stock y publicaciones desde un solo lugar.</p></div><button class="btn cta" id="productsCreateButton" type="button">+ Crear producto</button></div><div class="admin-summary-strip"><span><b>${state.products.length}</b> publicaciones</span><span><b>${state.products.reduce((total, product) => total + Number(product.stock || 0), 0)}</b> unidades en stock</span></div><label class="admin-product-search"><span>⌕</span><input id="adminProductSearch" type="search" placeholder="Buscar por producto, SKU o categoría"></label>${state.products.length ? `<div class="admin-product-table"><div class="admin-product-table-head"><span>Publicación</span><span>Precio</span><span>Stock</span><span>Estado</span><span>Acciones</span></div><div id="adminProductList">${state.products.map((product) => adminProductRowMarkup(product)).join("")}</div></div>` : '<div class="notice">Todavía no hay productos publicados.</div>'}`;
@@ -2162,6 +2314,8 @@ function openAdminSection(view) {
   if (view === "chats" || view === "conversation") return openAdminChats();
   if (view === "settings") return openSettings();
   if (view === "orders") return openAdminOrders();
+  if (view === "invoices") return openAdminInvoices();
+  if (view === "withdrawals") return openAdminWithdrawals();
   return openAdminProducts();
 }
 function bindAdminDashboard() {
@@ -2187,6 +2341,12 @@ function bindAdminDashboard() {
   document
     .querySelector("#ordersBtn")
     ?.addEventListener("click", openAdminOrders);
+  document
+    .querySelector("#invoicesBtn")
+    ?.addEventListener("click", openAdminInvoices);
+  document
+    .querySelector("#withdrawalsBtn")
+    ?.addEventListener("click", openAdminWithdrawals);
   document.querySelector("#chatsBtn")?.addEventListener("click", openAdminChats);
   document.querySelector("#logout")?.addEventListener("click", logout);
   document.querySelector("#adminSidebarToggle")?.addEventListener("click", () =>
@@ -2397,12 +2557,21 @@ function openSettings() {
   setAdminActive("settings");
   state.activeConversationId = null;
   const ws = document.querySelector("#adminWorkspace");
-  ws.innerHTML = `<h3>Configuración de la tienda</h3><form id="settingsForm" class="form-grid"><div class="field"><label>Porcentaje de seña</label><input name="deposit_percentage" type="number" min="1" max="100" value="${state.settings.deposit_percentage || 50}"></div><div class="field"><label>WhatsApp de ventas</label><input name="sales_whatsapp" value="${escapeHtml(state.settings.sales_whatsapp || "")}"></div><div class="field full"><label>Email de contacto</label><input name="contact_email" type="email" value="${escapeHtml(normalizedContactEmail(state.settings.contact_email))}"></div><button class="btn secondary">Guardar</button></form>`;
+  ws.innerHTML = `<div class="admin-page-head"><div><p class="eyebrow orange">AJUSTES</p><h1>Configuración de la tienda</h1><p>Valores comerciales y fiscales que usarán las publicaciones nuevas o editadas.</p></div></div><form id="settingsForm" class="settings-sections"><section><h3>Ventas y contacto</h3><div class="form-grid"><div class="field"><label>Porcentaje de seña</label><input name="deposit_percentage" type="number" min="1" max="100" value="${state.settings.deposit_percentage || 50}"></div><div class="field"><label>WhatsApp de ventas</label><input name="sales_whatsapp" value="${escapeHtml(state.settings.sales_whatsapp || "")}"></div><div class="field full"><label>Email de contacto</label><input name="contact_email" type="email" value="${escapeHtml(normalizedContactEmail(state.settings.contact_email))}"></div></div></section><section><h3>Calculadora de precios</h3><p>Valores iniciales para cada producto. No modifican automáticamente publicaciones ya existentes.</p><div class="form-grid"><div class="field"><label>IVA predeterminado</label><input name="vat_rate" type="number" min="0" max="100" step="0.01" value="${Number(state.settings.vat_rate ?? 21)}"></div><div class="field"><label>Costo de cobro estimado</label><input name="payment_fee_rate" type="number" min="0" max="99" step="0.01" value="${Number(state.settings.payment_fee_rate ?? 7)}"><small>No uses 28% si ese porcentaje ya incluye IVA; cargá sólo la tasa real de Mercado Pago.</small></div><div class="field"><label>Margen comercial adicional</label><input name="commercial_margin_rate" type="number" min="0" max="500" step="0.01" value="${Number(state.settings.commercial_margin_rate ?? 0)}"></div><div class="field"><label>Redondeo de precios</label><input name="pricing_rounding" type="number" min="0" step="0.01" value="${Number(state.settings.pricing_rounding ?? 100)}"></div></div></section><section><h3>Facturación asistida</h3><p>Completá estos datos únicamente después de confirmarlos con tu contador.</p><div class="form-grid"><div class="field"><label>Modo</label><select name="invoice_mode"><option value="assisted" ${state.settings.invoice_mode === "assisted" ? "selected" : ""}>Asistido desde ARCA</option><option value="automated" ${state.settings.invoice_mode === "automated" ? "selected" : ""}>Automatizado (requiere integración)</option><option value="disabled" ${state.settings.invoice_mode === "disabled" ? "selected" : ""}>Desactivado</option></select></div><div class="field"><label>Condición de Aceros Oeste</label><select name="issuer_tax_status"><option value="pending_accountant" ${state.settings.issuer_tax_status === "pending_accountant" ? "selected" : ""}>Pendiente de contador</option><option value="responsable_inscripto" ${state.settings.issuer_tax_status === "responsable_inscripto" ? "selected" : ""}>Responsable inscripto</option><option value="monotributista" ${state.settings.issuer_tax_status === "monotributista" ? "selected" : ""}>Monotributista</option><option value="exento" ${state.settings.issuer_tax_status === "exento" ? "selected" : ""}>Exento</option></select></div><div class="field"><label>CUIT emisor</label><input name="issuer_cuit" inputmode="numeric" value="${escapeHtml(state.settings.issuer_cuit || "")}" placeholder="Confirmar con contador"></div><div class="field"><label>Punto de venta</label><input name="invoice_point_of_sale" type="number" min="1" value="${escapeHtml(state.settings.invoice_point_of_sale || "")}" placeholder="Confirmar con contador"></div><div class="field"><label>Comprobante predeterminado</label><select name="default_invoice_type"><option value="">Definir con contador</option><option value="Factura A" ${state.settings.default_invoice_type === "Factura A" ? "selected" : ""}>Factura A</option><option value="Factura B" ${state.settings.default_invoice_type === "Factura B" ? "selected" : ""}>Factura B</option><option value="Factura C" ${state.settings.default_invoice_type === "Factura C" ? "selected" : ""}>Factura C</option></select></div></div></section><button class="btn cta" type="submit">Guardar configuración</button></form>`;
   document.querySelector("#settingsForm").onsubmit = async (e) => {
     e.preventDefault();
     const button = e.submitter,
       values = Object.fromEntries(new FormData(e.target));
     values.deposit_percentage = Number(values.deposit_percentage);
+    values.vat_rate = Number(values.vat_rate);
+    values.payment_fee_rate = Number(values.payment_fee_rate);
+    values.commercial_margin_rate = Number(values.commercial_margin_rate);
+    values.pricing_rounding = Number(values.pricing_rounding);
+    values.invoice_point_of_sale = values.invoice_point_of_sale
+      ? Number(values.invoice_point_of_sale)
+      : null;
+    values.issuer_cuit = String(values.issuer_cuit || "").replace(/\D/g, "") || null;
+    values.default_invoice_type = values.default_invoice_type || null;
     setBusy(button, true);
     const { data, error } = await supabase
       .from("store_settings")
@@ -2614,7 +2783,224 @@ function adminOrderMarkup(order, profile = {}) {
   return `<article class="admin-order-card" data-order-card="${order.id}"><header><div class="admin-order-customer">${avatarMarkup(profile, "user-avatar admin-order-avatar")}<div><small>CLIENTE</small><b>${escapeHtml(name)}</b><span>${escapeHtml(order.customer_email || "Sin email")} · ${escapeHtml(order.customer_phone || "Sin teléfono")}</span></div></div><div><span class="order-status status-${escapeHtml(order.status)}">${statusLabel(order.status)}</span><small>Pedido ${escapeHtml(String(order.id).slice(0, 8).toUpperCase())}</small></div></header><div class="admin-order-products">${products || '<span class="notice">Sin detalle de productos</span>'}</div><div class="admin-order-finance"><span><small>Total</small><b>${money(order.subtotal)}</b></span><span><small>${order.payment_type === "deposit" ? "Seña" : "Acreditado"}</small><b>${money(order.amount_to_pay || order.subtotal)}</b></span>${balance ? `<span class="pending"><small>Saldo pendiente</small><b>${money(balance)}</b></span>` : ""}</div><div class="admin-order-actions"><label class="order-status-label">Estado<select data-order-status="${order.id}">${["deposit_paid", "paid", "in_transit", "fulfilled", "cancelled"].map((status) => `<option value="${status}" ${order.status === status ? "selected" : ""}>${statusLabel(status)}</option>`).join("")}</select></label><button class="btn cta" data-admin-order-chat="${order.id}" type="button">Abrir chat del pedido</button>${["fulfilled", "cancelled"].includes(order.status) ? `<button class="btn danger" data-delete-order="${order.id}" type="button">Eliminar pedido</button>` : ""}</div></article>`;
 }
 
-function openEditProduct(id = null, similarId = null) {
+function billingConditionLabel(value) {
+  return (
+    {
+      consumer_final: "Consumidor final",
+      monotributista: "Monotributista",
+      responsable_inscripto: "Responsable inscripto",
+      exento: "Exento",
+    }[value] || "Sin informar"
+  );
+}
+
+async function openAdminInvoices() {
+  stopChatRealtime();
+  state.adminView = "invoices";
+  setAdminActive("invoices");
+  const workspace = document.querySelector("#adminWorkspace");
+  workspace.innerHTML = '<div class="empty">Cargando facturación…</div>';
+  const { data, error } = await supabase
+    .from("orders")
+    .select("*, order_items(*), invoices(*)")
+    .in("status", ["deposit_paid", "paid", "in_transit", "fulfilled", "cancelled"])
+    .order("created_at", { ascending: false })
+    .limit(200);
+  if (error) {
+    console.error(error);
+    workspace.innerHTML = '<div class="notice">No pudimos cargar la facturación. Aplicá la migración 017.</div>';
+    return;
+  }
+  const orders = data || [];
+  const pending = orders.filter((order) => order.billing_status !== "invoiced").length;
+  workspace.innerHTML = `<div class="admin-page-head"><div><p class="eyebrow orange">GESTIÓN FISCAL</p><h1>Facturación</h1><p>Registrá los comprobantes emitidos en ARCA y entregá el PDF al cliente.</p></div><span class="session-badge">${pending} pendientes</span></div><div class="fiscal-warning"><b>Modo asistido</b><p>El precio cobrado ya es final. No vuelvas a sumar IVA al emitir la factura. Confirmá con tu contador el tipo de comprobante, la seña, el saldo y la condición fiscal de Aceros Oeste.</p></div><div class="invoice-admin-list">${orders.length ? orders.map(adminInvoiceOrderMarkup).join("") : '<div class="notice">No hay ventas acreditadas para facturar.</div>'}</div>`;
+  document.querySelectorAll("[data-create-invoice]").forEach((button) => {
+    button.onclick = () =>
+      openInvoiceEditor(
+        orders.find((order) => String(order.id) === button.dataset.createInvoice),
+      );
+  });
+  document.querySelectorAll("[data-admin-invoice-download]").forEach((button) => {
+    button.onclick = () => downloadInvoice(button.dataset.adminInvoiceDownload, button);
+  });
+}
+
+function adminInvoiceOrderMarkup(order) {
+  const invoices = order.invoices || [];
+  const invoiced = invoices
+    .filter((invoice) => invoice.status !== "cancelled")
+    .reduce((sum, invoice) => sum + Number(invoice.gross_amount || 0), 0);
+  return `<article class="invoice-order-card"><header><div><small>PEDIDO ${escapeHtml(String(order.id).slice(0, 8).toUpperCase())}</small><h3>${escapeHtml(orderProductsLabel(order) || "Compra")}</h3><p>${escapeHtml(order.customer_name || "Cliente")} · ${escapeHtml(order.customer_email || "Sin email")}</p></div><span class="billing-status billing-${escapeHtml(order.billing_status || "pending")}">${order.billing_status === "invoiced" ? "Facturado" : order.billing_status === "partial" ? "Facturación parcial" : "Pendiente"}</span></header><div class="invoice-order-data"><span><small>Condición</small><b>${escapeHtml(billingConditionLabel(order.billing_condition))}</b></span><span><small>Razón social</small><b>${escapeHtml(order.billing_name || order.customer_name || "Sin informar")}</b></span><span><small>Documento</small><b>${escapeHtml([order.billing_document_type, order.billing_document_number].filter(Boolean).join(" ") || "Sin informar")}</b></span><span><small>Total del pedido</small><b>${money(order.subtotal)}</b></span><span><small>Ya registrado</small><b>${money(invoiced)}</b></span></div><div class="invoice-doc-list">${invoices.length ? invoices.map((invoice) => `<div><span><b>${escapeHtml(invoice.invoice_type)}</b><small>${invoice.invoice_number ? `${String(invoice.point_of_sale || 0).padStart(5, "0")}-${String(invoice.invoice_number).padStart(8, "0")}` : "Sin numeración"} · ${money(invoice.gross_amount)} · ${invoice.status === "sent" ? "Enviada" : "Registrada"}</small></span>${invoice.pdf_path ? `<button class="text-button" type="button" data-admin-invoice-download="${escapeHtml(invoice.pdf_path)}">Ver PDF</button>` : ""}</div>`).join("") : '<small>Todavía no hay comprobantes registrados.</small>'}</div><footer><button class="btn cta" type="button" data-create-invoice="${order.id}">Registrar comprobante</button></footer></article>`;
+}
+
+function openInvoiceEditor(order) {
+  if (!order) return;
+  const defaultVat = Number(state.settings.vat_rate ?? 21);
+  const defaultAmount =
+    order.payment_type === "deposit"
+      ? Number(order.amount_to_pay || 0)
+      : Number(order.subtotal || 0);
+  openModal(`<button class="modal-close" data-close>×</button><p class="eyebrow orange">FACTURACIÓN ASISTIDA</p><h2>Registrar comprobante</h2><p class="modal-copy">Pedido ${escapeHtml(String(order.id).slice(0, 8).toUpperCase())} · ${escapeHtml(orderProductsLabel(order))}</p><form id="invoiceForm" class="form-grid"><div class="field"><label>Tipo de comprobante</label><select name="invoice_type"><option value="Factura A" ${state.settings.default_invoice_type === "Factura A" ? "selected" : ""}>Factura A</option><option value="Factura B" ${!state.settings.default_invoice_type || state.settings.default_invoice_type === "Factura B" ? "selected" : ""}>Factura B</option><option value="Factura C" ${state.settings.default_invoice_type === "Factura C" ? "selected" : ""}>Factura C</option><option value="Nota de crédito A">Nota de crédito A</option><option value="Nota de crédito B">Nota de crédito B</option><option value="Nota de crédito C">Nota de crédito C</option></select></div><div class="field"><label>Concepto</label><select name="scope"><option value="${order.payment_type === "deposit" ? "deposit" : "full"}">${order.payment_type === "deposit" ? "Seña / anticipo" : "Pago completo"}</option><option value="balance">Saldo</option><option value="credit_note">Nota de crédito</option></select></div><div class="field"><label>Punto de venta</label><input name="point_of_sale" type="number" min="1" value="${escapeHtml(state.settings.invoice_point_of_sale || "")}" required></div><div class="field"><label>Número</label><input name="invoice_number" type="number" min="1" required></div><div class="field"><label>CAE</label><input name="cae" maxlength="30" required></div><div class="field"><label>Vencimiento CAE</label><input name="cae_expiration" type="date" required></div><div class="field"><label>Fecha de emisión</label><input name="issued_at" type="date" value="${new Date().toISOString().slice(0, 10)}" required></div><div class="field"><label>IVA de referencia</label><input name="vat_rate" id="invoiceVatRate" type="number" min="0" max="100" step="0.01" value="${defaultVat}" required></div><div class="field full"><label>Total del comprobante</label><input name="gross_amount" id="invoiceGrossAmount" type="number" min="0" step="0.01" value="${defaultAmount}" required><small>Debe coincidir con el comprobante emitido. El sistema calcula neto e IVA sin modificar el total cobrado.</small></div><div class="invoice-calculation field full" id="invoiceCalculation"></div><div class="field full"><label class="invoice-pdf-upload">Adjuntar factura PDF<input id="invoicePdf" type="file" accept="application/pdf" required></label><small>PDF emitido desde ARCA · máximo 10 MB.</small></div><button class="btn cta field full" type="submit">Guardar y enviar al cliente</button></form>`);
+  const renderCalculation = () => {
+    const gross = Number(document.querySelector("#invoiceGrossAmount").value || 0);
+    const vat = Number(document.querySelector("#invoiceVatRate").value || 0);
+    const net = vat ? gross / (1 + vat / 100) : gross;
+    document.querySelector("#invoiceCalculation").innerHTML = `<span>Neto estimado <b>${money(net)}</b></span><span>IVA ${vat}% <b>${money(gross - net)}</b></span><span>Total <b>${money(gross)}</b></span>`;
+  };
+  document.querySelector("#invoiceGrossAmount").oninput = renderCalculation;
+  document.querySelector("#invoiceVatRate").oninput = renderCalculation;
+  renderCalculation();
+  document.querySelector("#invoiceForm").onsubmit = (event) =>
+    saveInvoice(event, order);
+}
+
+async function saveInvoice(event, order) {
+  event.preventDefault();
+  const button = event.submitter;
+  const values = Object.fromEntries(new FormData(event.currentTarget));
+  const file = document.querySelector("#invoicePdf")?.files?.[0];
+  if (!file || file.type !== "application/pdf")
+    return toast("Adjuntá la factura en formato PDF.", "error");
+  if (file.size > 10_000_000)
+    return toast("El PDF supera los 10 MB.", "error");
+  setBusy(button, true, "Guardando…");
+  let pdfPath = "";
+  try {
+    pdfPath = `${order.id}/${crypto.randomUUID()}.pdf`;
+    const { error: uploadError } = await supabase.storage
+      .from("invoice-documents")
+      .upload(pdfPath, file, { contentType: "application/pdf", upsert: false });
+    if (uploadError) throw uploadError;
+    const gross = Number(values.gross_amount || 0);
+    const vatRate = Number(values.vat_rate || 0);
+    const net = vatRate ? gross / (1 + vatRate / 100) : gross;
+    const payload = {
+      order_id: order.id,
+      user_id: order.user_id,
+      invoice_type: values.invoice_type,
+      scope: values.scope,
+      point_of_sale: Number(values.point_of_sale),
+      invoice_number: Number(values.invoice_number),
+      cae: String(values.cae || "").trim(),
+      cae_expiration: values.cae_expiration,
+      issued_at: new Date(`${values.issued_at}T12:00:00`).toISOString(),
+      net_amount: Math.round(net * 100) / 100,
+      vat_rate: vatRate,
+      vat_amount: Math.round((gross - net) * 100) / 100,
+      gross_amount: gross,
+      pdf_path: pdfPath,
+      status: "authorized",
+    };
+    const { data: invoice, error } = await supabase
+      .from("invoices")
+      .insert(payload)
+      .select("id")
+      .single();
+    if (error) throw error;
+    const previousAmount = (order.invoices || [])
+      .filter((item) => item.status !== "cancelled")
+      .reduce((sum, item) => sum + Number(item.gross_amount || 0), 0);
+    const billingStatus =
+      values.scope === "full" || previousAmount + gross >= Number(order.subtotal || 0)
+        ? "invoiced"
+        : "partial";
+    await supabase
+      .from("orders")
+      .update({ billing_status: billingStatus })
+      .eq("id", order.id);
+    const { error: emailError } = await supabase.functions.invoke(
+      "send-invoice-email",
+      { body: { invoiceId: invoice.id } },
+    );
+    closeModal();
+    await openAdminInvoices();
+    toast(
+      emailError
+        ? "Factura guardada, pero el email no pudo enviarse."
+        : "Factura guardada y enviada al cliente.",
+      emailError ? "error" : "success",
+    );
+  } catch (error) {
+    if (pdfPath)
+      await supabase.storage.from("invoice-documents").remove([pdfPath]);
+    toast(error.message || "No se pudo registrar la factura.", "error");
+  } finally {
+    setBusy(button, false);
+  }
+}
+
+async function openAdminWithdrawals() {
+  stopChatRealtime();
+  state.adminView = "withdrawals";
+  setAdminActive("withdrawals");
+  const workspace = document.querySelector("#adminWorkspace");
+  workspace.innerHTML = '<div class="empty">Cargando solicitudes…</div>';
+  const { data, error } = await supabase
+    .from("withdrawal_requests")
+    .select("*, orders(customer_name,customer_email,subtotal,payment_type,status)")
+    .order("created_at", { ascending: false })
+    .limit(200);
+  if (error) {
+    console.error(error);
+    workspace.innerHTML = '<div class="notice">No pudimos cargar las solicitudes. Aplicá la migración 017.</div>';
+    return;
+  }
+  const requests = data || [];
+  workspace.innerHTML = `<div class="admin-page-head"><div><p class="eyebrow orange">POSVENTA</p><h1>Arrepentimientos</h1><p>Revisá cada solicitud, documentá la resolución y mantené informado al cliente.</p></div><span class="session-badge">${requests.filter((item) => !["rejected", "closed"].includes(item.status)).length} abiertas</span></div><div class="withdrawal-admin-list">${requests.length ? requests.map(adminWithdrawalMarkup).join("") : '<div class="notice">Todavía no hay solicitudes.</div>'}</div>`;
+  document.querySelectorAll("[data-review-withdrawal]").forEach((button) => {
+    button.onclick = () =>
+      openWithdrawalReview(
+        requests.find((item) => String(item.id) === button.dataset.reviewWithdrawal),
+      );
+  });
+}
+
+function withdrawalStatusLabel(status) {
+  return (
+    {
+      submitted: "Recibida",
+      under_review: "En revisión",
+      awaiting_return: "Esperando devolución",
+      refund_pending: "Reintegro pendiente",
+      refunded: "Reintegrada",
+      rejected: "Rechazada",
+      closed: "Cerrada",
+    }[status] || status
+  );
+}
+
+function adminWithdrawalMarkup(request) {
+  const items = Array.isArray(request.items) ? request.items : [];
+  return `<article class="withdrawal-admin-card"><header><div><small>${escapeHtml(request.request_code)}</small><h3>${escapeHtml(request.customer_name)}</h3><p>${escapeHtml(request.customer_email)} · ${escapeHtml(request.customer_phone || "Sin teléfono")}</p></div><span class="withdrawal-status">${escapeHtml(withdrawalStatusLabel(request.status))}</span></header><div class="withdrawal-products">${items.map((item) => `<span><b>${Math.max(1, Number(item.quantity) || 1)}× ${escapeHtml(item.product_name || "Producto")}</b><small>${escapeHtml(saleTypeLabel(item.sale_type))}</small></span>`).join("") || "Sin detalle"}</div>${request.reason ? `<blockquote>${escapeHtml(request.reason)}</blockquote>` : ""}${request.resolution_reason ? `<div class="withdrawal-resolution"><b>Resolución registrada</b><p>${escapeHtml(request.resolution_reason)}</p></div>` : ""}<footer><small>${new Date(request.created_at).toLocaleString("es-AR")}</small><button class="btn cta" type="button" data-review-withdrawal="${request.id}">Revisar solicitud</button></footer></article>`;
+}
+
+function openWithdrawalReview(request) {
+  if (!request) return;
+  openModal(`<button class="modal-close" data-close>×</button><p class="eyebrow orange">${escapeHtml(request.request_code)}</p><h2>Actualizar solicitud</h2><form id="withdrawalReviewForm" class="form-grid"><div class="field"><label>Estado</label><select name="status">${["under_review", "awaiting_return", "refund_pending", "refunded", "rejected", "closed"].map((status) => `<option value="${status}" ${request.status === status ? "selected" : ""}>${escapeHtml(withdrawalStatusLabel(status))}</option>`).join("")}</select></div><div class="field"><label>Importe de reintegro</label><input name="refundAmount" type="number" min="0" step="0.01" value="${escapeHtml(request.refund_amount || "")}"></div><div class="field full"><label>ID de reintegro de Mercado Pago</label><input name="mpRefundId" value="${escapeHtml(request.mp_refund_id || "")}" placeholder="Completalo si ya realizaste el reintegro"></div><div class="field full"><label>Respuesta y próximos pasos</label><textarea name="resolutionReason" maxlength="2000" rows="7" required>${escapeHtml(request.resolution_reason || "")}</textarea><small>Este texto se enviará por email al cliente.</small></div><div class="fiscal-warning field full"><b>Control manual</b><p>Registrar “Reintegrada” no mueve dinero automáticamente. Primero realizá y verificá el reintegro en Mercado Pago; después guardá aquí su identificador.</p></div><button class="btn cta field full" type="submit">Guardar y notificar</button></form>`);
+  document.querySelector("#withdrawalReviewForm").onsubmit = (event) =>
+    updateWithdrawalRequest(event, request.id);
+}
+
+async function updateWithdrawalRequest(event, requestId) {
+  event.preventDefault();
+  const button = event.submitter;
+  const values = Object.fromEntries(new FormData(event.currentTarget));
+  if (values.status === "refunded" && !String(values.mpRefundId || "").trim())
+    return toast("Ingresá el ID del reintegro antes de marcarla como reintegrada.", "error");
+  setBusy(button, true, "Guardando…");
+  const { data, error } = await supabase.functions.invoke(
+    "update-withdrawal-request",
+    { body: { requestId, ...values } },
+  );
+  setBusy(button, false);
+  if (error || !data?.updated)
+    return toast(data?.error || error?.message || "No se pudo actualizar.", "error");
+  closeModal();
+  await openAdminWithdrawals();
+  toast("Solicitud actualizada y cliente notificado.", "success");
+}
+
+async function openEditProduct(id = null, similarId = null) {
   if (!isAdmin()) return;
   const editing = state.products.find((p) => String(p.id) === String(id));
   const source = state.products.find(
@@ -2641,7 +3027,30 @@ function openEditProduct(id = null, similarId = null) {
           images: [],
           desc: "",
           details: "",
+          saleType: "standard",
         };
+  const pricingSourceId = editing?.id || source?.id || null;
+  let pricing = {
+    base_net_price: 0,
+    vat_rate: Number(state.settings.vat_rate ?? 21),
+    payment_fee_rate: Number(state.settings.payment_fee_rate ?? 7),
+    commercial_margin_rate: Number(state.settings.commercial_margin_rate ?? 0),
+    rounding_unit: Number(state.settings.pricing_rounding ?? 100),
+  };
+  if (pricingSourceId) {
+    const { data: savedPricing } = await supabase
+      .from("product_pricing")
+      .select("*")
+      .eq("product_id", pricingSourceId)
+      .maybeSingle();
+    if (savedPricing) pricing = { ...pricing, ...savedPricing };
+  }
+  if (!Number(pricing.base_net_price) && Number(product.price)) {
+    const vat = 1 + Number(pricing.vat_rate || 0) / 100;
+    const fee = 1 - Number(pricing.payment_fee_rate || 0) / 100;
+    const margin = 1 + Number(pricing.commercial_margin_rate || 0) / 100;
+    pricing.base_net_price = Math.round((Number(product.price) * fee * 100) / (vat * margin)) / 100;
+  }
   state.productEditorId = editing?.id || null;
   state.adminView = editing ? "product-editor" : "create-product";
   if (location.hash.split("?")[0] !== "#panel-general") {
@@ -2653,9 +3062,49 @@ function openEditProduct(id = null, similarId = null) {
   setAdminActive(editing ? "products" : "create-product");
   const workspace = document.querySelector("#adminWorkspace");
   if (!workspace) return;
-  workspace.innerHTML = `<div class="admin-page-head"><div><p class="eyebrow orange">${editing ? "MODIFICAR PUBLICACIÓN" : source ? "PUBLICAR SIMILAR" : "NUEVA PUBLICACIÓN"}</p><h1>${editing ? "Modificar producto" : "Crear producto"}</h1><p>${source ? `Partimos de ${escapeHtml(source.name)}. Editá lo que necesites antes de publicar.` : "Completá cada etapa y publicá cuando toda la información esté lista."}</p></div><button class="btn outline" id="cancelProductEditor" type="button">Cancelar</button></div><div class="product-wizard"><div class="product-wizard-progress"><span class="active" data-wizard-indicator="1"><b>1</b> Información</span><span data-wizard-indicator="2"><b>2</b> Precio y stock</span><span data-wizard-indicator="3"><b>3</b> Descripción</span><span data-wizard-indicator="4"><b>4</b> Fotos y publicación</span></div><form id="productForm" class="product-wizard-form"><section class="product-wizard-step" data-wizard-step="1"><small>PASO 1 DE 4</small><h2>¿Qué producto vas a publicar?</h2><p>Usá un título claro para que el cliente entienda rápidamente qué está viendo.</p><div class="form-grid"><div class="field full"><label>Nombre del producto</label><input name="name" value="${escapeHtml(product.name)}" placeholder="Ej.: Mesada con bacha 120 × 60" required></div><div class="field"><label>Categoría</label><select name="category_id" required>${state.categories.map((c) => `<option value="${c.id}" ${product.categoryId === c.id ? "selected" : ""}>${escapeHtml(c.name)}</option>`).join("")}</select></div><div class="field"><label>SKU o código interno</label><input name="sku" value="${escapeHtml(product.sku)}" placeholder="Ej.: MB-12060" required></div></div></section><section class="product-wizard-step hidden" data-wizard-step="2"><small>PASO 2 DE 4</small><h2>Definí el precio y el stock</h2><p>Estos datos se actualizarán inmediatamente en el catálogo.</p><div class="form-grid"><div class="field"><label>Precio final</label><input name="price" type="number" min="0" step="0.01" value="${product.price}" required></div><div class="field"><label>Unidades disponibles</label><input name="stock_quantity" type="number" min="0" value="${product.stock}" required></div></div></section><section class="product-wizard-step hidden" data-wizard-step="3"><small>PASO 3 DE 4</small><h2>Contá los detalles del producto</h2><p>Explicá materiales, medidas, usos y todo lo que ayude al cliente a decidir.</p><div class="form-grid"><div class="field full"><label>Descripción principal</label><textarea name="description" rows="5" required>${escapeHtml(product.desc)}</textarea></div><div class="field full"><label>Detalles adicionales</label><textarea name="details" rows="6">${escapeHtml(product.details)}</textarea></div></div></section><section class="product-wizard-step hidden" data-wizard-step="4"><small>PASO 4 DE 4</small><h2>Agregá fotos y videos</h2><p>La primera imagen será la portada. Podés seleccionar varios archivos a la vez.</p><div class="product-media-inputs"><label class="product-media-drop">＋<b>Seleccionar fotos</b><small>JPG, PNG o WebP · hasta 5 MB cada una</small><input id="productPhotos" type="file" accept="image/png,image/jpeg,image/webp" multiple hidden></label><label class="product-media-drop">▶<b>Seleccionar videos</b><small>MP4 o WebM · hasta 50 MB cada uno</small><input id="productVideos" type="file" accept="video/mp4,video/webm" multiple hidden></label></div><div class="field full"><p class="field-caption">Galería de la publicación</p><div id="existingMedia" class="media-admin-grid">${(product.images || []).map((url, index) => `<label class="media-admin-item">${isVideoUrl(url) ? `<video src="${escapeHtml(url)}" muted></video>` : `<img src="${escapeHtml(url)}" alt="Medio ${index + 1}">`}<span><input type="checkbox" value="${escapeHtml(url)}" data-remove-media> Quitar</span></label>`).join("")}</div><div id="newMediaPreview" class="media-admin-grid"></div></div><div class="publish-review"><b>Todo listo para ${editing ? "guardar" : "publicar"}</b><span>Revisá los pasos anteriores. Podrás modificar la publicación cuando quieras.</span></div></section><div class="product-wizard-actions"><button class="btn outline hidden" id="wizardBack" type="button">← Anterior</button><span></span><button class="btn secondary" id="wizardNext" type="button">Continuar →</button><button class="btn cta hidden" id="wizardPublish" type="submit">${editing ? "Guardar cambios" : "Publicar"}</button></div></form></div>`;
+  workspace.innerHTML = `<div class="admin-page-head"><div><p class="eyebrow orange">${editing ? "MODIFICAR PUBLICACIÓN" : source ? "PUBLICAR SIMILAR" : "NUEVA PUBLICACIÓN"}</p><h1>${editing ? "Modificar producto" : "Crear producto"}</h1><p>${source ? `Partimos de ${escapeHtml(source.name)}. Editá lo que necesites antes de publicar.` : "Completá cada etapa y publicá cuando toda la información esté lista."}</p></div><button class="btn outline" id="cancelProductEditor" type="button">Cancelar</button></div><div class="product-wizard"><div class="product-wizard-progress"><span class="active" data-wizard-indicator="1"><b>1</b> Información</span><span data-wizard-indicator="2"><b>2</b> Precio y stock</span><span data-wizard-indicator="3"><b>3</b> Descripción</span><span data-wizard-indicator="4"><b>4</b> Fotos y publicación</span></div><form id="productForm" class="product-wizard-form"><section class="product-wizard-step" data-wizard-step="1"><small>PASO 1 DE 4</small><h2>¿Qué producto vas a publicar?</h2><p>Usá un título claro y definí si se vende estándar o siguiendo especificaciones particulares.</p><div class="form-grid"><div class="field full"><label>Nombre del producto</label><input name="name" value="${escapeHtml(product.name)}" placeholder="Ej.: Mesada con bacha 120 × 60" required></div><div class="field"><label>Categoría</label><select name="category_id" required>${state.categories.map((c) => `<option value="${c.id}" ${product.categoryId === c.id ? "selected" : ""}>${escapeHtml(c.name)}</option>`).join("")}</select></div><div class="field"><label>SKU o código interno</label><input name="sku" value="${escapeHtml(product.sku)}" placeholder="Ej.: MB-12060" required></div><div class="field full"><label>Modalidad de venta</label><select name="sale_type" required><option value="standard" ${product.saleType === "standard" ? "selected" : ""}>Producto estándar</option><option value="customizable" ${product.saleType === "customizable" ? "selected" : ""}>Estándar personalizable</option><option value="made_to_order" ${product.saleType === "made_to_order" ? "selected" : ""}>Fabricado completamente a medida</option></select><small>La modalidad se guarda también dentro de cada pedido para documentar las condiciones aceptadas.</small></div></div></section><section class="product-wizard-step hidden" data-wizard-step="2"><small>PASO 2 DE 4</small><h2>Calculá el precio final</h2><p>El catálogo y Mercado Pago siempre usarán el precio final. IVA, costo de cobro y margen quedan como cálculo interno.</p><div class="pricing-calculator"><div class="form-grid"><div class="field"><label>Costo/base neta</label><input name="base_net_price" id="pricingBase" type="number" min="0" step="0.01" value="${pricing.base_net_price}" required></div><div class="field"><label>IVA</label><input name="vat_rate" id="pricingVat" type="number" min="0" max="100" step="0.01" value="${pricing.vat_rate}" required></div><div class="field"><label>Costo de cobro estimado</label><input name="payment_fee_rate" id="pricingFee" type="number" min="0" max="99" step="0.01" value="${pricing.payment_fee_rate}" required><small>Ingresá la tasa real acordada con Mercado Pago.</small></div><div class="field"><label>Margen comercial adicional</label><input name="commercial_margin_rate" id="pricingMargin" type="number" min="0" max="500" step="0.01" value="${pricing.commercial_margin_rate}" required></div><div class="field"><label>Redondear hacia arriba cada</label><input name="rounding_unit" id="pricingRounding" type="number" min="0" step="0.01" value="${pricing.rounding_unit}" required></div><div class="field"><label>Unidades disponibles</label><input name="stock_quantity" type="number" min="0" value="${product.stock}" required></div><div class="field full final-price-field"><label>Precio final publicado</label><input name="price" id="pricingFinal" type="number" min="0" step="0.01" value="${product.price}" required><small>Podés modificarlo manualmente. Este es el único precio que verá y pagará el cliente.</small></div></div><div id="pricingBreakdown" class="pricing-breakdown"></div></div></section><section class="product-wizard-step hidden" data-wizard-step="3"><small>PASO 3 DE 4</small><h2>Contá los detalles del producto</h2><p>Explicá materiales, medidas, usos y todo lo que ayude al cliente a decidir. Para trabajos a medida, detallá qué debe aprobarse antes de fabricar.</p><div class="form-grid"><div class="field full"><label>Descripción principal</label><textarea name="description" rows="5" required>${escapeHtml(product.desc)}</textarea></div><div class="field full"><label>Detalles adicionales</label><textarea name="details" rows="6">${escapeHtml(product.details)}</textarea></div></div></section><section class="product-wizard-step hidden" data-wizard-step="4"><small>PASO 4 DE 4</small><h2>Agregá fotos y videos</h2><p>La primera imagen será la portada. Podés seleccionar varios archivos a la vez.</p><div class="product-media-inputs"><label class="product-media-drop">＋<b>Seleccionar fotos</b><small>JPG, PNG o WebP · hasta 5 MB cada una</small><input id="productPhotos" type="file" accept="image/png,image/jpeg,image/webp" multiple hidden></label><label class="product-media-drop">▶<b>Seleccionar videos</b><small>MP4 o WebM · hasta 50 MB cada uno</small><input id="productVideos" type="file" accept="video/mp4,video/webm" multiple hidden></label></div><div class="field full"><p class="field-caption">Galería de la publicación</p><div id="existingMedia" class="media-admin-grid">${(product.images || []).map((url, index) => `<label class="media-admin-item">${isVideoUrl(url) ? `<video src="${escapeHtml(url)}" muted></video>` : `<img src="${escapeHtml(url)}" alt="Medio ${index + 1}">`}<span><input type="checkbox" value="${escapeHtml(url)}" data-remove-media> Quitar</span></label>`).join("")}</div><div id="newMediaPreview" class="media-admin-grid"></div></div><div class="publish-review"><b>Todo listo para ${editing ? "guardar" : "publicar"}</b><span>Revisá los pasos anteriores. El precio publicado ya debe incluir IVA y costos comerciales.</span></div></section><div class="product-wizard-actions"><button class="btn outline hidden" id="wizardBack" type="button">← Anterior</button><span></span><button class="btn secondary" id="wizardNext" type="button">Continuar →</button><button class="btn cta hidden" id="wizardPublish" type="submit">${editing ? "Guardar cambios" : "Publicar"}</button></div></form></div>`;
   const photoInput = document.querySelector("#productPhotos");
   const videoInput = document.querySelector("#productVideos");
+  const pricingInputs = {
+    base: document.querySelector("#pricingBase"),
+    vat: document.querySelector("#pricingVat"),
+    fee: document.querySelector("#pricingFee"),
+    margin: document.querySelector("#pricingMargin"),
+    rounding: document.querySelector("#pricingRounding"),
+    final: document.querySelector("#pricingFinal"),
+  };
+  const renderPricing = ({ updateFinal = false } = {}) => {
+    const base = Number(pricingInputs.base.value || 0);
+    const vatRate = Number(pricingInputs.vat.value || 0);
+    const paymentFeeRate = Number(pricingInputs.fee.value || 0);
+    const commercialMarginRate = Number(pricingInputs.margin.value || 0);
+    const roundingUnit = Number(pricingInputs.rounding.value || 0);
+    const suggested = suggestedFinalPrice({
+      baseNetPrice: base,
+      vatRate,
+      paymentFeeRate,
+      commercialMarginRate,
+      roundingUnit,
+    });
+    if (updateFinal || !Number(pricingInputs.final.value))
+      pricingInputs.final.value = String(suggested);
+    const final = Number(pricingInputs.final.value || suggested);
+    const netBeforeVat = vatRate ? final / (1 + vatRate / 100) : final;
+    const vatAmount = final - netBeforeVat;
+    const feeAmount = final * (paymentFeeRate / 100);
+    document.querySelector("#pricingBreakdown").innerHTML = `<span><small>Precio sugerido</small><b>${money(suggested)}</b></span><span><small>Neto estimado en factura</small><b>${money(netBeforeVat)}</b></span><span><small>IVA incluido</small><b>${money(vatAmount)}</b></span><span><small>Costo de cobro estimado</small><b>${money(feeAmount)}</b></span><p>La comisión real depende del medio y plazo de acreditación. Confirmala en Mercado Pago y revisá este cálculo con tu contador.</p>`;
+  };
+  [
+    pricingInputs.base,
+    pricingInputs.vat,
+    pricingInputs.fee,
+    pricingInputs.margin,
+    pricingInputs.rounding,
+  ].forEach((input) => {
+    input.oninput = () => renderPricing({ updateFinal: true });
+  });
+  pricingInputs.final.oninput = () => renderPricing();
+  renderPricing();
   const selectedMedia = () => [...photoInput.files, ...videoInput.files];
   const renderNewMediaPreview = () => {
     const files = selectedMedia();
@@ -2739,6 +3188,20 @@ async function saveProduct(event, current, files) {
   event.preventDefault();
   const button = event.submitter,
     values = Object.fromEntries(new FormData(event.target));
+  const pricingValues = {
+    base_net_price: Number(values.base_net_price),
+    vat_rate: Number(values.vat_rate),
+    payment_fee_rate: Number(values.payment_fee_rate),
+    commercial_margin_rate: Number(values.commercial_margin_rate),
+    rounding_unit: Number(values.rounding_unit),
+  };
+  [
+    "base_net_price",
+    "vat_rate",
+    "payment_fee_rate",
+    "commercial_margin_rate",
+    "rounding_unit",
+  ].forEach((key) => delete values[key]);
   values.price = Number(values.price);
   values.stock_quantity = Number(values.stock_quantity);
   values.slug = current.id
@@ -2758,8 +3221,12 @@ async function saveProduct(event, current, files) {
     const query = current.id
       ? supabase.from("products").update(values).eq("id", current.id)
       : supabase.from("products").insert(values);
-    const { error } = await query;
+    const { data: savedProduct, error } = await query.select("id").single();
     if (error) throw error;
+    const { error: pricingError } = await supabase
+      .from("product_pricing")
+      .upsert({ product_id: savedProduct.id, ...pricingValues });
+    if (pricingError) throw pricingError;
     await loadStoreData({ route: false });
     state.adminView = "products";
     state.productEditorId = null;

@@ -143,19 +143,19 @@ La tienda envía automáticamente:
 
 - confirmación al cliente cuando Mercado Pago aprueba el pago;
 - aviso al cliente cuando el administrador cambia el pedido a **En camino**;
-- copia oculta de ambos mensajes a `gestionacerosoeste@gmail.com`.
+- copia oculta de ambos mensajes a `gestionacerosoestee@gmail.com`.
 
 Para producción, verificá `acerosoeste.com` en Resend y creá una API key. Después:
 
 ```powershell
 npx supabase secrets set RESEND_API_KEY="TU_API_KEY" --project-ref dvisdjvzwbfklrpzsuhe
 npx supabase secrets set FROM_EMAIL="Aceros Oeste <no-reply@notificaciones.acerosoeste.com>" --project-ref dvisdjvzwbfklrpzsuhe
-npx supabase secrets set ADMIN_EMAIL="gestionacerosoeste@gmail.com" --project-ref dvisdjvzwbfklrpzsuhe
+npx supabase secrets set ADMIN_EMAIL="gestionacerosoestee@gmail.com" --project-ref dvisdjvzwbfklrpzsuhe
 npx supabase functions deploy mp-webhook --project-ref dvisdjvzwbfklrpzsuhe --no-verify-jwt
 npx supabase functions deploy send-order-email --project-ref dvisdjvzwbfklrpzsuhe --no-verify-jwt
 ```
 
-`FROM_EMAIL` debe pertenecer a un dominio verificado. No uses Gmail como remitente de Resend: la verificación SPF/DKIM del dominio evita rechazos y spam. Las respuestas llegan a `gestionacerosoeste@gmail.com`.
+`FROM_EMAIL` debe pertenecer a un dominio verificado. No uses Gmail como remitente de Resend: la verificación SPF/DKIM del dominio evita rechazos y spam. Las respuestas llegan a `gestionacerosoestee@gmail.com`.
 
 Para que las confirmaciones de cuenta y recuperación tampoco salgan con el
 remitente de Supabase, configurá el SMTP de Resend en **Authentication > SMTP
@@ -218,6 +218,28 @@ privadas de clientes autenticados.
 3. Abrir la web en incógnito y comprobar que aparezca ese producto.
 4. Confirmar que `MP_ENVIRONMENT` esté en `production` y realizar una compra real controlada.
 5. Confirmar que el pedido aparezca en Mi cuenta y en Pedidos del admin.
+
+## 8. Facturación y botón de arrepentimiento (v24)
+
+Antes de publicar la v24, leé
+`ACTUALIZACION-V24-FISCAL-Y-ARREPENTIMIENTO.md`. La migración `017` agrega datos
+fiscales, facturas privadas, clasificación de productos y solicitudes de
+arrepentimiento.
+
+```powershell
+npx supabase db push
+npx supabase functions deploy mp-create-preference --no-verify-jwt
+npx supabase functions deploy mp-webhook --no-verify-jwt
+npx supabase functions deploy send-order-email --no-verify-jwt
+npx supabase functions deploy send-admin-notification --no-verify-jwt
+npx supabase functions deploy create-withdrawal-request --no-verify-jwt
+npx supabase functions deploy update-withdrawal-request --no-verify-jwt
+npx supabase functions deploy send-invoice-email --no-verify-jwt
+```
+
+El precio publicado es siempre final. No sumes IVA durante el checkout ni al
+registrar la factura: definí con el contador la condición fiscal, el tipo de
+comprobante, el punto de venta y el tratamiento de señas y saldos.
 6. Confirmar que Mercado Pago marque el webhook con respuesta HTTP 200.
 7. Abrir cliente y administrador en dos ventanas: cancelar un pedido y confirmar
    que el panel cambie sin usar F5.
