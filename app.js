@@ -286,6 +286,12 @@ function toast(message, type = "info") {
   clearTimeout(toast.timer);
   toast.timer = setTimeout(() => node.classList.remove("show"), 3200);
 }
+function readableFunctionError(message, fallback) {
+  const value = String(message || "").trim();
+  return /non-2xx|failed to send a request to the edge function/i.test(value)
+    ? fallback
+    : value || fallback;
+}
 function setBusy(button, busy, text = "Procesando…") {
   if (!button) return;
   if (busy) {
@@ -574,6 +580,7 @@ function renderNotificationCenter() {
       order: "✓",
       withdrawal: "↩",
       invoice: "F",
+      feedback: "✦",
     })[type] || "•";
   dropdown.innerHTML = `<header><div><b>Notificaciones</b><small>${unread ? `${unread} nueva${unread === 1 ? "" : "s"}` : "Todo al día"}</small></div>${state.notifications.length ? '<button id="readAllNotifications" type="button">Limpiar todo</button>' : ""}</header>${"Notification" in window && Notification.permission !== "granted" ? '<button id="enableDeviceNotifications" class="notification-permission" type="button"><b>Activar avisos en este dispositivo</b><small>Recibilos en la computadora o el celular mientras la tienda esté activa.</small></button>' : ""}<div class="notification-list">${state.notifications.length ? state.notifications.map((item) => `<button class="notification-item ${item.is_read ? "" : "unread"}" data-notification-id="${escapeHtml(item.id)}" type="button"><i>${icon(item.type)}</i><span><b>${escapeHtml(item.title)}</b><small>${escapeHtml(item.body)}</small><time>${new Date(item.created_at).toLocaleString("es-AR", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}</time></span></button>`).join("") : '<p class="notification-empty">No hay notificaciones nuevas.</p>'}</div>`;
   document.querySelector("#enableDeviceNotifications")?.addEventListener(
@@ -722,6 +729,13 @@ async function openNotification(notification) {
       location.hash = `producto/${encodeURIComponent(product.slug)}`;
       return;
     }
+  }
+  if (notification.type === "feedback") {
+    toast(
+      "La sugerencia completa fue enviada al correo de gestión.",
+      "info",
+    );
+    return;
   }
   location.hash = "panel-general";
   if (notification.type === "sale") {
@@ -1273,6 +1287,9 @@ function handleRoute() {
   } else if (route === "arrepentimiento") {
     showStandalonePage("#arrepentimiento");
     renderWithdrawalPage();
+  } else if (route === "sugerencias") {
+    showStandalonePage("#sugerencias");
+    renderFeedbackPage();
   } else if (emailConfirmed) {
     showStandalonePage("#cuenta");
     renderAccount();
@@ -1331,9 +1348,52 @@ async function submitWithdrawalRequest(event) {
         // La respuesta general cubre errores sin JSON.
       }
     }
-    return toast(message || error?.message || "No pudimos registrar la solicitud.", "error");
+    return toast(
+      readableFunctionError(
+        message || error?.message,
+        "No pudimos registrar la solicitud. Verificá los datos o intentá nuevamente.",
+      ),
+      "error",
+    );
   }
   document.querySelector("#withdrawalContent").innerHTML = `<div class="withdrawal-success"><span>✓</span><p class="eyebrow orange">SOLICITUD RECIBIDA</p><h1>${escapeHtml(data.requestCode)}</h1><p>Guardá este código. Te enviamos la confirmación al email de la compra y administración ya recibió el aviso.</p><a class="btn cta" href="#inicio">Volver a la tienda</a></div>`;
+  window.scrollTo(0, 0);
+}
+
+function renderFeedbackPage() {
+  const content = document.querySelector("#feedbackContent");
+  if (!content) return;
+  content.innerHTML = `<div class="feedback-intro"><p class="eyebrow orange">TU EXPERIENCIA NOS AYUDA</p><h1>¿Qué podemos mejorar?</h1><p>Leemos cada sugerencia para mejorar nuestros productos, la atención y la experiencia de compra. Pedimos que el mensaje sea claro, respetuoso y constructivo.</p></div><form id="feedbackForm" class="feedback-form"><div class="field"><label>Nombre</label><input name="name" maxlength="100" value="${escapeHtml(state.profile?.full_name || "")}" required></div><div class="field"><label>Email</label><input name="email" type="email" maxlength="180" value="${escapeHtml(state.user?.email || "")}" required></div><div class="field"><label>Tema</label><select name="category"><option value="producto">Producto</option><option value="atencion">Atención</option><option value="entrega">Entrega o retiro</option><option value="sitio">Página web</option><option value="general" selected>Sugerencia general</option></select></div><div class="field"><label>Código de pedido <span>(opcional)</span></label><input name="orderCode" maxlength="60" placeholder="Si está relacionado con una compra"></div><div class="field full feedback-honeypot" aria-hidden="true"><label>Sitio web<input name="website" tabindex="-1" autocomplete="off"></label></div><div class="field full"><label>Tu sugerencia</label><textarea name="message" minlength="20" maxlength="1800" rows="7" placeholder="Contanos qué ocurrió y qué cambio te resultaría útil." required></textarea><small>No se aceptan insultos, amenazas ni lenguaje discriminatorio.</small></div><button class="btn cta field full" type="submit">Enviar sugerencia</button></form>`;
+  document.querySelector("#feedbackForm").onsubmit = submitFeedback;
+}
+
+async function submitFeedback(event) {
+  event.preventDefault();
+  const button = event.submitter;
+  const values = Object.fromEntries(new FormData(event.currentTarget));
+  setBusy(button, true, "Enviando…");
+  const { data, error } = await supabase.functions.invoke("send-feedback", {
+    body: values,
+  });
+  setBusy(button, false);
+  if (error || !data?.received) {
+    let message = data?.error;
+    if (!message && error?.context?.json) {
+      try {
+        message = (await error.context.json())?.error;
+      } catch {
+        // Se muestra el mensaje general si la respuesta no contiene JSON.
+      }
+    }
+    return toast(
+      readableFunctionError(
+        message || error?.message,
+        "No pudimos enviar la sugerencia. Intentá nuevamente en unos minutos.",
+      ),
+      "error",
+    );
+  }
+  document.querySelector("#feedbackContent").innerHTML = `<div class="feedback-success"><span>✓</span><p class="eyebrow orange">MENSAJE RECIBIDO</p><h1>Gracias por ayudarnos a mejorar.</h1><p>La sugerencia fue enviada al equipo de Aceros Oeste.</p><a class="btn cta" href="#inicio">Volver a la tienda</a></div>`;
   window.scrollTo(0, 0);
 }
 
@@ -1489,16 +1549,25 @@ async function openCheckout(event) {
     document.querySelector("[name=paymentType]:checked")?.value || "full";
   closeCart();
   openModal(
-    `<button class="modal-close" data-close>×</button><p class="eyebrow orange">PAGO SEGURO</p><h2>Datos para tu pedido</h2><form id="checkoutForm" class="form-grid"><div class="field full"><label>Nombre completo</label><input name="name" value="${escapeHtml(state.profile?.full_name || "")}" required></div><div class="field"><label>Email de la cuenta</label><input name="email" type="email" value="${escapeHtml(state.user?.email || "")}" readonly required></div><div class="field"><label>Teléfono</label><input name="phone" value="${escapeHtml(state.profile?.phone || "")}" required></div><div class="field full checkout-divider"><b>Datos de facturación</b><small>El precio mostrado ya es final e incluye los impuestos configurados. No se agregará IVA después del pago.</small></div><div class="field"><label>Condición fiscal</label><select name="billingCondition" id="billingCondition"><option value="consumer_final">Consumidor final</option><option value="monotributista">Monotributista</option><option value="responsable_inscripto">Responsable inscripto</option><option value="exento">Exento</option></select></div><div class="field"><label>Nombre o razón social</label><input name="billingName" value="${escapeHtml(state.profile?.full_name || "")}"></div><div class="field"><label>Tipo de documento</label><select name="billingDocumentType"><option value="DNI">DNI</option><option value="CUIT">CUIT</option><option value="CUIL">CUIL</option></select></div><div class="field"><label>DNI o CUIT</label><input name="billingDocumentNumber" inputmode="numeric" maxlength="14" placeholder="Sin puntos ni guiones"></div><div class="field full"><label>Domicilio de facturación</label><input name="billingAddress" autocomplete="street-address" placeholder="Calle, número, localidad y provincia"></div><input name="paymentType" type="hidden" value="${paymentType}"><button class="btn cta field full" type="submit">Continuar a Mercado Pago</button></form><p><small>El importe se vuelve a calcular de forma segura en el servidor.</small></p>`,
+    `<button class="modal-close" data-close>×</button><p class="eyebrow orange">PAGO SEGURO</p><h2>Datos para tu pedido</h2><form id="checkoutForm" class="form-grid"><div class="field full"><label>Nombre completo</label><input name="name" value="${escapeHtml(state.profile?.full_name || "")}" required></div><div class="field"><label>Email de la cuenta</label><input name="email" type="email" value="${escapeHtml(state.user?.email || "")}" readonly required></div><div class="field"><label>Teléfono</label><input name="phone" value="${escapeHtml(state.profile?.phone || "")}" required></div><label class="field full checkout-invoice-toggle"><input id="needsFiscalInvoice" name="needsFiscalInvoice" type="checkbox" value="yes"><span><b>Necesito el comprobante con CUIT o razón social</b><small>Completá estos datos sólo si la compra no debe emitirse a consumidor final.</small></span></label><div id="checkoutFiscalFields" class="form-grid field full hidden"><div class="field"><label>Condición fiscal</label><select name="billingCondition"><option value="monotributista">Monotributista</option><option value="responsable_inscripto">Responsable inscripto</option><option value="exento">Exento</option></select></div><div class="field"><label>Razón social</label><input name="billingName" value="${escapeHtml(state.profile?.full_name || "")}"></div><div class="field"><label>Tipo de documento</label><select name="billingDocumentType"><option value="CUIT">CUIT</option><option value="CUIL">CUIL</option><option value="DNI">DNI</option></select></div><div class="field"><label>Número</label><input name="billingDocumentNumber" inputmode="numeric" maxlength="14" placeholder="Sin puntos ni guiones"></div><div class="field full"><label>Domicilio fiscal</label><input name="billingAddress" autocomplete="street-address" placeholder="Calle, número, localidad y provincia"></div></div><input name="paymentType" type="hidden" value="${paymentType}"><button class="btn cta field full" type="submit">Continuar a Mercado Pago</button></form>`,
   );
+  const invoiceToggle = document.querySelector("#needsFiscalInvoice");
+  const fiscalFields = document.querySelector("#checkoutFiscalFields");
+  invoiceToggle.onchange = () => {
+    fiscalFields.classList.toggle("hidden", !invoiceToggle.checked);
+    fiscalFields.querySelectorAll("input").forEach((input) => {
+      input.required = invoiceToggle.checked && input.name !== "billingAddress";
+    });
+  };
   document.querySelector("#checkoutForm").onsubmit = startPayment;
 }
 async function startPayment(event) {
   event.preventDefault();
   const button = event.submitter,
     form = Object.fromEntries(new FormData(event.target));
+  const needsFiscalInvoice = form.needsFiscalInvoice === "yes";
   if (
-    form.billingCondition !== "consumer_final" &&
+    needsFiscalInvoice &&
     (!String(form.billingName || "").trim() ||
       !String(form.billingDocumentNumber || "").replace(/\D/g, ""))
   )
@@ -1543,11 +1612,17 @@ async function startPayment(event) {
           email: form.email,
           phone: form.phone,
           billing: {
-            condition: form.billingCondition,
-            name: form.billingName,
-            documentType: form.billingDocumentType,
-            documentNumber: form.billingDocumentNumber,
-            address: form.billingAddress,
+            condition: needsFiscalInvoice
+              ? form.billingCondition
+              : "consumer_final",
+            name: needsFiscalInvoice ? form.billingName : form.name,
+            documentType: needsFiscalInvoice
+              ? form.billingDocumentType
+              : null,
+            documentNumber: needsFiscalInvoice
+              ? form.billingDocumentNumber
+              : null,
+            address: needsFiscalInvoice ? form.billingAddress : null,
           },
         },
       },
@@ -1565,9 +1640,10 @@ async function startPayment(event) {
       }
     }
     return toast(
-      backendMessage ||
-        error?.message ||
+      readableFunctionError(
+        backendMessage || error?.message,
         "No pudimos iniciar el pago. Revisá la configuración de Mercado Pago.",
+      ),
       "error",
     );
   }
@@ -1926,7 +2002,7 @@ function customerOrderMarkup(order) {
   );
   const invoiceBlock = invoices.length
     ? `<div class="purchase-documents"><b>Comprobantes</b>${invoices.map((invoice) => `<button class="invoice-download" type="button" data-invoice-path="${escapeHtml(invoice.pdf_path)}"><span>PDF</span><div><b>${escapeHtml(invoice.invoice_type)}</b><small>${invoice.invoice_number ? `${String(invoice.point_of_sale || 0).padStart(5, "0")}-${String(invoice.invoice_number).padStart(8, "0")}` : "Comprobante disponible"} · ${money(invoice.gross_amount)}</small></div><i>Descargar</i></button>`).join("")}</div>`
-    : `<div class="purchase-invoice-pending"><span>Factura</span><small>${order.billing_status === "pending" ? "Pendiente de emisión" : "En preparación"}</small></div>`;
+    : "";
   const withdrawal = (order.withdrawal_requests || []).find(
     (request) => !["rejected", "closed"].includes(request.status),
   ) || (order.withdrawal_requests || [])[0];
@@ -2673,6 +2749,7 @@ async function openAdminOrders() {
     .from("orders")
     .select("*, order_items(*)")
     .in("status", ["deposit_paid", "paid", "in_transit", "fulfilled", "cancelled"])
+    .is("admin_archived_at", null)
     .order("created_at", { ascending: false })
     .limit(100);
   if (error) {
@@ -2727,21 +2804,21 @@ async function openAdminOrders() {
     button.onclick = async () => {
       if (
         !(await confirmAction({
-          title: "Eliminar pedido finalizado",
+          title: "Archivar pedido finalizado",
           message:
-            "El pedido se borrará del registro del panel. Esta acción no se puede deshacer.",
-          confirmLabel: "Eliminar pedido",
+            "El pedido dejará de verse en Pedidos, pero conservará sus facturas, solicitudes y trazabilidad.",
+          confirmLabel: "Archivar pedido",
         }))
       )
         return;
       const { error } = await supabase
         .from("orders")
-        .delete()
+        .update({ admin_archived_at: new Date().toISOString() })
         .eq("id", button.dataset.deleteOrder)
         .in("status", ["fulfilled", "cancelled"]);
       if (error) return toast(error.message, "error");
       button.closest("[data-order-card]")?.remove();
-      toast("Pedido eliminado", "success");
+      toast("Pedido archivado", "success");
     };
   });
   document.querySelectorAll("[data-admin-order-chat]").forEach((button) => {
@@ -2780,7 +2857,7 @@ function adminOrderMarkup(order, profile = {}) {
     const image = orderItemImage(item);
     return `<div class="admin-order-product"><div>${image ? `<img src="${escapeHtml(image)}" alt="${escapeHtml(item.product_name || "Producto")}">` : `<span>${escapeHtml(String(item.product_name || "P").slice(0, 1))}</span>`}</div><p><b>${escapeHtml(item.product_name || "Producto")}</b><small>${Math.max(1, Number(item.quantity) || 1)} unidad${Number(item.quantity) === 1 ? "" : "es"}</small></p></div>`;
   }).join("");
-  return `<article class="admin-order-card" data-order-card="${order.id}"><header><div class="admin-order-customer">${avatarMarkup(profile, "user-avatar admin-order-avatar")}<div><small>CLIENTE</small><b>${escapeHtml(name)}</b><span>${escapeHtml(order.customer_email || "Sin email")} · ${escapeHtml(order.customer_phone || "Sin teléfono")}</span></div></div><div><span class="order-status status-${escapeHtml(order.status)}">${statusLabel(order.status)}</span><small>Pedido ${escapeHtml(String(order.id).slice(0, 8).toUpperCase())}</small></div></header><div class="admin-order-products">${products || '<span class="notice">Sin detalle de productos</span>'}</div><div class="admin-order-finance"><span><small>Total</small><b>${money(order.subtotal)}</b></span><span><small>${order.payment_type === "deposit" ? "Seña" : "Acreditado"}</small><b>${money(order.amount_to_pay || order.subtotal)}</b></span>${balance ? `<span class="pending"><small>Saldo pendiente</small><b>${money(balance)}</b></span>` : ""}</div><div class="admin-order-actions"><label class="order-status-label">Estado<select data-order-status="${order.id}">${["deposit_paid", "paid", "in_transit", "fulfilled", "cancelled"].map((status) => `<option value="${status}" ${order.status === status ? "selected" : ""}>${statusLabel(status)}</option>`).join("")}</select></label><button class="btn cta" data-admin-order-chat="${order.id}" type="button">Abrir chat del pedido</button>${["fulfilled", "cancelled"].includes(order.status) ? `<button class="btn danger" data-delete-order="${order.id}" type="button">Eliminar pedido</button>` : ""}</div></article>`;
+  return `<article class="admin-order-card" data-order-card="${order.id}"><header><div class="admin-order-customer">${avatarMarkup(profile, "user-avatar admin-order-avatar")}<div><small>CLIENTE</small><b>${escapeHtml(name)}</b><span>${escapeHtml(order.customer_email || "Sin email")} · ${escapeHtml(order.customer_phone || "Sin teléfono")}</span></div></div><div><span class="order-status status-${escapeHtml(order.status)}">${statusLabel(order.status)}</span><small>Pedido ${escapeHtml(String(order.id).slice(0, 8).toUpperCase())}</small></div></header><div class="admin-order-products">${products || '<span class="notice">Sin detalle de productos</span>'}</div><div class="admin-order-finance"><span><small>Total</small><b>${money(order.subtotal)}</b></span><span><small>${order.payment_type === "deposit" ? "Seña" : "Acreditado"}</small><b>${money(order.amount_to_pay || order.subtotal)}</b></span>${balance ? `<span class="pending"><small>Saldo pendiente</small><b>${money(balance)}</b></span>` : ""}</div><div class="admin-order-actions"><label class="order-status-label">Estado<select data-order-status="${order.id}">${["deposit_paid", "paid", "in_transit", "fulfilled", "cancelled"].map((status) => `<option value="${status}" ${order.status === status ? "selected" : ""}>${statusLabel(status)}</option>`).join("")}</select></label><button class="btn cta" data-admin-order-chat="${order.id}" type="button">Abrir chat del pedido</button>${["fulfilled", "cancelled"].includes(order.status) ? `<button class="btn danger" data-delete-order="${order.id}" type="button">Archivar pedido</button>` : ""}</div></article>`;
 }
 
 function billingConditionLabel(value) {
@@ -2813,7 +2890,7 @@ async function openAdminInvoices() {
   }
   const orders = data || [];
   const pending = orders.filter((order) => order.billing_status !== "invoiced").length;
-  workspace.innerHTML = `<div class="admin-page-head"><div><p class="eyebrow orange">GESTIÓN FISCAL</p><h1>Facturación</h1><p>Registrá los comprobantes emitidos en ARCA y entregá el PDF al cliente.</p></div><span class="session-badge">${pending} pendientes</span></div><div class="fiscal-warning"><b>Modo asistido</b><p>El precio cobrado ya es final. No vuelvas a sumar IVA al emitir la factura. Confirmá con tu contador el tipo de comprobante, la seña, el saldo y la condición fiscal de Aceros Oeste.</p></div><div class="invoice-admin-list">${orders.length ? orders.map(adminInvoiceOrderMarkup).join("") : '<div class="notice">No hay ventas acreditadas para facturar.</div>'}</div>`;
+  workspace.innerHTML = `<div class="admin-page-head"><div><p class="eyebrow orange">COMPROBANTES</p><h1>Facturación</h1></div><span class="session-badge">${pending} pendientes</span></div><div class="invoice-admin-list">${orders.length ? orders.map(adminInvoiceOrderMarkup).join("") : '<div class="notice">No hay ventas acreditadas para facturar.</div>'}</div>`;
   document.querySelectorAll("[data-create-invoice]").forEach((button) => {
     button.onclick = () =>
       openInvoiceEditor(
@@ -2994,7 +3071,13 @@ async function updateWithdrawalRequest(event, requestId) {
   );
   setBusy(button, false);
   if (error || !data?.updated)
-    return toast(data?.error || error?.message || "No se pudo actualizar.", "error");
+    return toast(
+      readableFunctionError(
+        data?.error || error?.message,
+        "No se pudo actualizar la solicitud.",
+      ),
+      "error",
+    );
   closeModal();
   await openAdminWithdrawals();
   toast("Solicitud actualizada y cliente notificado.", "success");

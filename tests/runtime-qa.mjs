@@ -66,12 +66,23 @@ const billingMigration = readFileSync(
   ),
   "utf8",
 );
+const feedbackMigration = readFileSync(
+  new URL(
+    "supabase/migrations/018_feedback_and_order_archiving.sql",
+    root,
+  ),
+  "utf8",
+);
 const withdrawalFunction = readFileSync(
   new URL("supabase/functions/create-withdrawal-request/index.ts", root),
   "utf8",
 );
 const invoiceEmailFunction = readFileSync(
   new URL("supabase/functions/send-invoice-email/index.ts", root),
+  "utf8",
+);
+const feedbackFunction = readFileSync(
+  new URL("supabase/functions/send-feedback/index.ts", root),
   "utf8",
 );
 const adminNotificationFunction = readFileSync(
@@ -355,7 +366,7 @@ const executable = html
   .replace('<script src="assets/vendor/supabase.js?v=1"></script>', "")
   .replace('<script src="config.js"></script>', "")
   .replace(
-    '<script src="app.js?v=24"></script>',
+    '<script src="app.js?v=25"></script>',
     `<script>${app.replaceAll("</script>", "<\\/script>")}</script>`,
   );
 const errors = [];
@@ -982,13 +993,30 @@ assert(
 assert(
   app.includes("suggestedFinalPrice") &&
     app.includes("Costo de cobro estimado") &&
-    app.includes("El precio cobrado ya es final") &&
     app.includes("openAdminInvoices") &&
     app.includes("openAdminWithdrawals") &&
     app.includes("invoice-documents") &&
     invoiceEmailFunction.includes("createSignedUrl") &&
     invoiceEmailFunction.includes("Tu factura está disponible"),
   "La calculadora o la facturación asistida no está completa",
+);
+assert(
+  html.includes('id="sugerencias"') &&
+    html.includes('href="#sugerencias"') &&
+    app.includes('supabase.functions.invoke("send-feedback"') &&
+    feedbackMigration.includes("create table if not exists public.feedback_submissions") &&
+    feedbackMigration.includes("admin_archived_at") &&
+    feedbackFunction.includes("inappropriatePatterns") &&
+    feedbackFunction.includes("ADMIN_EMAIL") &&
+    app.includes("admin_archived_at: new Date().toISOString()") &&
+    !app.includes('.from("orders")\n        .delete()\n        .eq("id", button.dataset.deleteOrder)'),
+  "Las sugerencias moderadas o el archivado seguro de pedidos están incompletos",
+);
+assert(
+  !app.includes("El importe se vuelve a calcular de forma segura en el servidor") &&
+    !app.includes("Modo asistido</b>") &&
+    app.includes("Necesito el comprobante con CUIT o razón social"),
+  "El checkout o el panel todavía muestran textos técnicos innecesarios",
 );
 await authListener?.("SIGNED_OUT", null);
 await new Promise((resolve) => setTimeout(resolve, 30));
@@ -1042,5 +1070,5 @@ if (errors.length) {
   process.exit(1);
 }
 console.log(
-  "QA OK: tienda, precios finales, facturación asistida y arrepentimiento",
+  "QA OK: tienda, checkout limpio, archivado seguro, sugerencias y facturación",
 );

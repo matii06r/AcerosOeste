@@ -267,3 +267,29 @@ imports `https://esm.sh`, instalá la extensión recomendada y ejecutá
 **Developer: Reload Window** desde la paleta de comandos. Esos imports son
 propios de las Edge Functions y no se resuelven con el servidor TypeScript
 normal de VS Code.
+
+## 9. Cierre de interfaz, sugerencias y archivo de pedidos (v25)
+
+Aplicá la migración `018_feedback_and_order_archiving.sql` y desplegá la nueva
+función pública:
+
+```powershell
+npx supabase db push
+npx supabase functions deploy send-feedback --no-verify-jwt
+```
+
+Como cambió el módulo compartido de correo, volvé a desplegar también:
+
+```powershell
+npx supabase functions deploy mp-webhook --no-verify-jwt
+npx supabase functions deploy send-order-email --no-verify-jwt
+npx supabase functions deploy send-admin-notification --no-verify-jwt
+npx supabase functions deploy create-withdrawal-request --no-verify-jwt
+npx supabase functions deploy update-withdrawal-request --no-verify-jwt
+npx supabase functions deploy send-invoice-email --no-verify-jwt
+```
+
+Los pedidos finalizados ahora se archivan; no los borres manualmente desde
+Supabase porque forman parte del historial comercial y pueden tener facturas o
+solicitudes relacionadas. Revisá los detalles en
+`ACTUALIZACION-V25-CIERRE-DE-TIENDA.md`.
