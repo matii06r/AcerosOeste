@@ -478,17 +478,17 @@ function handleConversationRealtime(payload) {
   }
 }
 function notificationTarget(notification) {
-  if (notification?.type === "question" && notification.product_id) {
+  if (isAdmin() && notification?.type === "question" && notification.product_id) {
     const product = state.products.find(
       (item) => String(item.id) === String(notification.product_id),
     );
     if (product) return `/#producto/${encodeURIComponent(product.slug)}`;
   }
-  return "/#panel-general";
+  return isAdmin() ? "/#panel-general" : "/#cuenta";
 }
 async function showDeviceNotification(notification) {
   if (
-    !isAdmin() ||
+    !state.user ||
     !("Notification" in window) ||
     Notification.permission !== "granted" ||
     !navigator.serviceWorker
@@ -524,12 +524,14 @@ function renderNotificationCenter() {
   const dropdown = document.querySelector("#notificationDropdown");
   const count = document.querySelector("#notificationCount");
   if (!center || !dropdown || !count) return;
-  center.classList.toggle("hidden", !isAdmin());
-  if (!isAdmin()) return;
+  center.classList.toggle("hidden", !state.user);
+  if (!state.user) return;
   const unread = state.notifications.filter((item) => !item.is_read).length;
   count.textContent = unread > 99 ? "99+" : String(unread);
   count.classList.toggle("hidden", unread === 0);
-  dropdown.innerHTML = `<header><div><b>Notificaciones</b><small>${unread ? `${unread} sin leer` : "Todo al día"}</small></div>${unread ? '<button id="readAllNotifications" type="button">Marcar leídas</button>' : ""}</header>${"Notification" in window && Notification.permission !== "granted" ? '<button id="enableDeviceNotifications" class="notification-permission" type="button"><b>Activar avisos en este dispositivo</b><small>Recibilos mientras el panel esté abierto.</small></button>' : ""}<div class="notification-list">${state.notifications.length ? state.notifications.map((item) => `<button class="notification-item ${item.is_read ? "" : "unread"}" data-notification-id="${escapeHtml(item.id)}" type="button"><i>${item.type === "question" ? "?" : "…"}</i><span><b>${escapeHtml(item.title)}</b><small>${escapeHtml(item.body)}</small><time>${new Date(item.created_at).toLocaleString("es-AR", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}</time></span></button>`).join("") : '<p class="notification-empty">No hay notificaciones nuevas.</p>'}</div>`;
+  const icon = (type) =>
+    ({ question: "?", message: "…", sale: "$", order: "✓" })[type] || "•";
+  dropdown.innerHTML = `<header><div><b>Notificaciones</b><small>${unread ? `${unread} nueva${unread === 1 ? "" : "s"}` : "Todo al día"}</small></div>${state.notifications.length ? '<button id="readAllNotifications" type="button">Limpiar todo</button>' : ""}</header>${"Notification" in window && Notification.permission !== "granted" ? '<button id="enableDeviceNotifications" class="notification-permission" type="button"><b>Activar avisos en este dispositivo</b><small>Recibilos en la computadora o el celular mientras la tienda esté activa.</small></button>' : ""}<div class="notification-list">${state.notifications.length ? state.notifications.map((item) => `<button class="notification-item ${item.is_read ? "" : "unread"}" data-notification-id="${escapeHtml(item.id)}" type="button"><i>${icon(item.type)}</i><span><b>${escapeHtml(item.title)}</b><small>${escapeHtml(item.body)}</small><time>${new Date(item.created_at).toLocaleString("es-AR", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}</time></span></button>`).join("") : '<p class="notification-empty">No hay notificaciones nuevas.</p>'}</div>`;
   document.querySelector("#enableDeviceNotifications")?.addEventListener(
     "click",
     enableDeviceNotifications,
@@ -540,21 +542,23 @@ function renderNotificationCenter() {
   );
   dropdown.querySelectorAll("[data-notification-id]").forEach((button) => {
     button.onclick = () =>
-      openAdminNotification(
+      openNotification(
         state.notifications.find(
           (item) => String(item.id) === button.dataset.notificationId,
         ),
       );
   });
 }
-async function loadAdminNotifications() {
-  if (!supabase || !isAdmin()) {
+const notificationTable = () =>
+  isAdmin() ? "admin_notifications" : "user_notifications";
+async function loadNotifications() {
+  if (!supabase || !state.user) {
     state.notifications = [];
     renderNotificationCenter();
     return;
   }
   const { data, error } = await supabase
-    .from("admin_notifications")
+    .from(notificationTable())
     .select("*")
     .order("created_at", { ascending: false })
     .limit(40);
@@ -571,28 +575,101 @@ async function loadAdminNotifications() {
   }
 }
 async function markAllNotificationsRead() {
+  if (!state.notifications.length) return;
   const { error } = await supabase
-    .from("admin_notifications")
-    .update({ is_read: true })
-    .eq("is_read", false);
+    .from(notificationTable())
+    .delete()
+    .in(
+      "id",
+      state.notifications.map((item) => item.id),
+    );
   if (error) return toast("No pudimos actualizar las notificaciones.", "error");
-  state.notifications = state.notifications.map((item) => ({
-    ...item,
-    is_read: true,
-  }));
+  state.notifications = [];
+  renderNotificationCenter();
+  navigator.clearAppBadge?.().catch(() => {});
+}
+async function removeNotification(notification) {
+  if (!notification) return;
+  const { error } = await supabase
+    .from(notificationTable())
+    .delete()
+    .eq("id", notification.id);
+  if (error) console.error("No se pudo limpiar la notificación", error);
+  state.notifications = state.notifications.filter(
+    (item) => String(item.id) !== String(notification.id),
+  );
   renderNotificationCenter();
 }
-async function openAdminNotification(notification) {
+async function clearConversationNotifications(conversationId) {
+  if (!state.user || !conversationId) return;
+  const table = notificationTable();
+  const ids = state.notifications
+    .filter(
+      (item) =>
+        item.type === "message" &&
+        String(item.conversation_id) === String(conversationId),
+    )
+    .map((item) => item.id);
+  if (!ids.length) return;
+  const { error } = await supabase.from(table).delete().in("id", ids);
+  if (!error) {
+    state.notifications = state.notifications.filter(
+      (item) => !ids.includes(item.id),
+    );
+    renderNotificationCenter();
+  }
+}
+async function clearOrderNotifications(orderIds = []) {
+  if (!state.user || !orderIds.length) return;
+  const ids = state.notifications
+    .filter(
+      (item) =>
+        item.order_id &&
+        orderIds.some(
+          (orderId) => String(orderId) === String(item.order_id),
+        ),
+    )
+    .map((item) => item.id);
+  if (!ids.length) return;
+  const { error } = await supabase
+    .from(notificationTable())
+    .delete()
+    .in("id", ids);
+  if (!error) {
+    state.notifications = state.notifications.filter(
+      (item) => !ids.includes(item.id),
+    );
+    renderNotificationCenter();
+  }
+}
+async function openNotification(notification) {
   if (!notification) return;
   document.querySelector("#notificationDropdown")?.classList.add("hidden");
   document.querySelector("#notificationBell")?.setAttribute("aria-expanded", "false");
-  if (!notification.is_read)
-    await supabase
-      .from("admin_notifications")
-      .update({ is_read: true })
-      .eq("id", notification.id);
-  notification.is_read = true;
-  renderNotificationCenter();
+  await removeNotification(notification);
+  if (!isAdmin()) {
+    location.hash = "cuenta";
+    renderAccount();
+    if (notification.type === "message" && !notification.order_id) {
+      setAccountTab("chat");
+      await openCustomerChat();
+      return;
+    }
+    if (notification.type === "message" && notification.order_id) {
+      const { data: order } = await supabase
+        .from("orders")
+        .select("*, order_items(*)")
+        .eq("id", notification.order_id)
+        .maybeSingle();
+      await openCustomerOrderChat(notification.order_id, order);
+      return;
+    }
+    setAccountTab("orders");
+    document.querySelector("#accountWorkspace").innerHTML =
+      '<div id="ordersList"><div class="empty">Cargando compras…</div></div>';
+    await loadOrders();
+    return;
+  }
   if (notification.type === "question" && notification.product_id) {
     const product = state.products.find(
       (item) => String(item.id) === String(notification.product_id),
@@ -603,15 +680,44 @@ async function openAdminNotification(notification) {
     }
   }
   location.hash = "panel-general";
+  if (notification.type === "sale") {
+    state.adminView = "orders";
+    renderAdminPanel({ openSection: false });
+    await openAdminOrders();
+    return;
+  }
   state.adminView = "chats";
-  renderAdminPanel();
+  renderAdminPanel({ openSection: false });
+  if (notification.type === "message" && notification.conversation_id) {
+    const { data: conversation } = await supabase
+      .from("support_conversations")
+      .select("*")
+      .eq("id", notification.conversation_id)
+      .maybeSingle();
+    if (conversation) {
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("full_name")
+        .eq("id", conversation.user_id)
+        .maybeSingle();
+      await openAdminConversation(
+        conversation.id,
+        profile?.full_name || "Cliente",
+        {
+          orderId: conversation.order_id || null,
+          backToOrders: Boolean(conversation.order_id),
+        },
+      );
+      return;
+    }
+  }
   await openAdminChats();
 }
-function handleAdminNotificationRealtime(payload) {
-  if (!isAdmin()) return;
-  scheduleRealtimeRefresh("admin-notifications", loadAdminNotifications, 80);
+function handleNotificationRealtime(payload) {
+  if (!state.user) return;
+  scheduleRealtimeRefresh("notifications", loadNotifications, 80);
   if (payload?.eventType === "INSERT" && payload.new) {
-    toast(payload.new.title || "Nueva consulta", "notification");
+    toast(payload.new.title || "Tenés una novedad", "notification");
     showDeviceNotification(payload.new);
   }
 }
@@ -660,10 +766,11 @@ function startAppRealtime() {
       { event: "*", schema: "public", table: "profiles" },
       () => scheduleRealtimeRefresh("profiles", refreshProfilesFromRealtime),
     )
-    .on(
+  if (state.user)
+    channel.on(
       "postgres_changes",
-      { event: "*", schema: "public", table: "admin_notifications" },
-      handleAdminNotificationRealtime,
+      { event: "*", schema: "public", table: notificationTable() },
+      handleNotificationRealtime,
     );
   state.liveChannel = channel.subscribe();
 }
@@ -716,7 +823,7 @@ async function applySession(session) {
     renderCartCount();
   }
   updateSessionNavigation();
-  if (isAdmin()) await loadAdminNotifications();
+  if (state.user) await loadNotifications();
   else {
     state.notifications = [];
     renderNotificationCenter();
@@ -1723,6 +1830,7 @@ async function loadOrders() {
         ),
       );
   });
+  await clearOrderNotifications(visibleOrders.map((order) => order.id));
 }
 async function hideCustomerOrder(orderId, button) {
   if (
@@ -1909,6 +2017,7 @@ async function openCustomerChat() {
     const conversation = await getCustomerConversation();
     state.activeConversationId = conversation.id;
     state.activeConversationName = state.profile?.full_name || "Cliente";
+    await clearConversationNotifications(conversation.id);
     workspace.innerHTML = `<div class="chat-head"><div><h3>Chat con Aceros Oeste</h3><p>Este chat es privado y se actualiza automáticamente.</p></div><div class="chat-head-actions"><span class="live-indicator"><i></i> En vivo</span><button class="btn danger" id="deleteCustomerConversation" type="button">Eliminar chat</button></div></div><div id="customerChatMessages" class="chat-messages"></div><form id="customerChatForm" class="chat-form"><textarea name="message" maxlength="2000" rows="3" placeholder="Escribí tu consulta…" required></textarea><button class="btn cta" type="submit">Enviar</button></form>`;
     const refresh = () =>
       loadConversationMessages(
@@ -1936,6 +2045,7 @@ async function openCustomerOrderChat(orderId, order = null) {
     const conversation = await getOrderConversation(orderId);
     if (!conversation?.id) throw new Error("No se pudo crear la conversación");
     state.activeConversationId = conversation.id;
+    await clearConversationNotifications(conversation.id);
     const label = orderProductsLabel(order || {}) || "Tu compra";
     workspace.innerHTML = `<div class="order-chat-context"><button class="text-button" id="backToCustomerOrders" type="button">← Volver a mis compras</button><span class="order-status ${order ? `status-${escapeHtml(order.status)}` : ""}">${order ? statusLabel(order.status) : "Pedido"}</span><h1>${escapeHtml(label)}</h1><p>Usá este espacio para consultar fechas de fabricación o entrega, retiro y formas de abonar el saldo.</p></div><div class="chat-head"><div><h3>Chat de la compra</h3><p>Conversación privada con administración · actualización en vivo.</p></div><div class="chat-head-actions"><span class="live-indicator"><i></i> En vivo</span><button class="btn danger" id="deleteCustomerOrderConversation" type="button">Eliminar chat</button></div></div><div id="customerOrderChatMessages" class="chat-messages"></div><form id="customerOrderChatForm" class="chat-form"><textarea name="message" maxlength="2000" rows="3" placeholder="Escribí una consulta sobre esta compra…" required></textarea><button class="btn cta" type="submit">Enviar</button></form>`;
     const refresh = () =>
@@ -1972,7 +2082,7 @@ function statusLabel(status) {
   );
 }
 
-function renderAdminPanel() {
+function renderAdminPanel({ openSection = true } = {}) {
   const container = document.querySelector("#adminPanelContent");
   if (!container) return;
   if (!isAdmin()) {
@@ -1983,7 +2093,7 @@ function renderAdminPanel() {
   state.activeConversationId = null;
   container.innerHTML = adminDashboard();
   bindAdminDashboard();
-  openAdminSection(state.adminView || "products");
+  if (openSection) openAdminSection(state.adminView || "products");
 }
 function adminDashboard() {
   return `<div class="admin-shell"><aside id="adminSidebar" class="admin-sidebar"><a class="admin-brand" href="#inicio"><img src="assets/logo-aceros-oeste.png" alt="Aceros Oeste"><span><b>ACEROS OESTE</b><small>Administración</small></span></a><nav class="admin-side-nav" aria-label="Panel de administración"><button class="admin-side-link primary" id="addProduct" data-admin-route="create-product" type="button"><i>＋</i><span>Crear producto</span></button><button class="admin-side-link" id="productsBtn" data-admin-route="products" type="button"><i>▤</i><span>Productos</span></button><button class="admin-side-link" id="usersBtn" data-admin-route="users" type="button"><i>●</i><span>Usuarios</span></button><button class="admin-side-link" id="categoriesBtn" data-admin-route="categories" type="button"><i>◇</i><span>Categorías</span></button><button class="admin-side-link" id="clientsBtn" data-admin-route="clients" type="button"><i>▧</i><span>Clientes y trabajos</span></button><button class="admin-side-link" id="chatsBtn" data-admin-route="chats" type="button"><i>▣</i><span>Chats</span></button><button class="admin-side-link" id="settingsBtn" data-admin-route="settings" type="button"><i>⚙</i><span>Configuración</span></button><button class="admin-side-link" id="ordersBtn" data-admin-route="orders" type="button"><i>▱</i><span>Pedidos</span></button></nav><div class="admin-sidebar-bottom"><a class="admin-side-link" href="#inicio"><i>←</i><span>Volver a la tienda</span></a><button class="admin-side-link" id="logout" type="button"><i>↪</i><span>Cerrar sesión</span></button></div></aside><main class="admin-main"><header class="admin-topbar"><button id="adminSidebarToggle" class="admin-sidebar-toggle" type="button" aria-label="Abrir menú">☰</button><div><small>PANEL GENERAL</small><b>${escapeHtml(state.profile?.full_name || "Administrador")}</b></div>${avatarMarkup(state.profile, "user-avatar admin-top-avatar")}</header><div id="adminWorkspace" class="admin-workspace"></div></main></div>`;
@@ -2355,6 +2465,7 @@ async function openAdminConversation(conversationId, customerName, context = {})
   state.activeConversationId = conversationId;
   state.activeConversationName = customerName || "Cliente";
   state.activeOrderId = context.orderId || null;
+  await clearConversationNotifications(conversationId);
   const workspace = document.querySelector("#adminWorkspace");
   const title = context.orderLabel || customerName || "Cliente";
   workspace.innerHTML = `<div class="chat-head"><div><button class="text-button" id="backToAdminChats" type="button">← Volver a ${context.backToOrders ? "pedidos" : "chats"}</button><h3>${escapeHtml(title)}</h3><p>${context.orderId ? `Chat del pedido con ${escapeHtml(customerName || "Cliente")}. Informá plazos, entrega y saldo pendiente.` : "Conversación privada que se actualiza automáticamente."}</p></div><div class="chat-head-actions"><span class="live-indicator"><i></i> En vivo</span><button class="btn danger" id="deleteAdminConversation" type="button">Eliminar chat</button></div></div><div id="adminChatMessages" class="chat-messages"></div><form id="adminChatForm" class="chat-form"><textarea name="message" maxlength="2000" rows="3" placeholder="${context.orderId ? "Informá fechas, retiro, entrega o cómo abonar el saldo…" : "Responder al cliente…"}" required></textarea><button class="btn cta" type="submit">Enviar respuesta</button></form>`;
@@ -2417,6 +2528,7 @@ async function openAdminOrders() {
     profiles.map((profile) => [profile.id, profile]),
   );
   ws.innerHTML = `<div class="admin-page-head"><div><p class="eyebrow orange">VENTAS</p><h1>Pedidos</h1><p>Compras con pago o seña acreditada. Los cambios se sincronizan en vivo.</p></div><span class="live-indicator"><i></i> En vivo</span></div>${visibleOrders.length ? `<div class="admin-orders-list">${visibleOrders.map((order) => adminOrderMarkup(order, profilesById[order.user_id])).join("")}</div>` : '<div class="notice">No hay pedidos con pago acreditado.</div>'}`;
+  await clearOrderNotifications(visibleOrders.map((order) => order.id));
   document.querySelectorAll("[data-order-status]").forEach(
     (select) =>
       (select.onchange = async () => {

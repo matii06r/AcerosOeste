@@ -4,6 +4,7 @@ import { JSDOM, VirtualConsole } from "jsdom";
 const root = new URL("../", import.meta.url);
 const html = readFileSync(new URL("index.html", root), "utf8");
 const app = readFileSync(new URL("app.js", root), "utf8");
+const styles = readFileSync(new URL("styles.css", root), "utf8");
 const paymentFunction = readFileSync(
   new URL("supabase/functions/mp-create-preference/index.ts", root),
   "utf8",
@@ -54,8 +55,20 @@ const adminPublicEmailMigration = readFileSync(
   new URL("supabase/migrations/015_admin_public_email.sql", root),
   "utf8",
 );
+const customerNotificationsMigration = readFileSync(
+  new URL("supabase/migrations/016_customer_order_notifications.sql", root),
+  "utf8",
+);
 const adminNotificationFunction = readFileSync(
   new URL("supabase/functions/send-admin-notification/index.ts", root),
+  "utf8",
+);
+const sharedEmailFunction = readFileSync(
+  new URL("supabase/functions/_shared/email.ts", root),
+  "utf8",
+);
+const paymentWebhookFunction = readFileSync(
+  new URL("supabase/functions/mp-webhook/index.ts", root),
   "utf8",
 );
 const rows = {
@@ -161,6 +174,19 @@ const rows = {
       conversation_id: null,
       is_read: false,
       created_at: "2026-08-20T11:00:00Z",
+    },
+  ],
+  user_notifications: [
+    {
+      id: "user-notification-1",
+      user_id: "customer-1",
+      type: "message",
+      title: "Nuevo mensaje de Aceros Oeste",
+      body: "Tenemos una novedad sobre tu consulta.",
+      order_id: null,
+      conversation_id: "conversation-1",
+      is_read: false,
+      created_at: "2026-08-20T12:00:00Z",
     },
   ],
 };
@@ -314,7 +340,7 @@ const executable = html
   .replace('<script src="assets/vendor/supabase.js?v=1"></script>', "")
   .replace('<script src="config.js"></script>', "")
   .replace(
-    '<script src="app.js?v=22"></script>',
+    '<script src="app.js?v=23"></script>',
     `<script>${app.replaceAll("</script>", "<\\/script>")}</script>`,
   );
 const errors = [];
@@ -446,6 +472,13 @@ assert(
       "gestionacerosoeste@gmail.com",
     ),
   "La cuenta administrativa todavía muestra el correo anterior",
+);
+d.querySelector("#notificationBell")?.click();
+d.querySelector("[data-notification-id]")?.click();
+await new Promise((resolve) => setTimeout(resolve, 30));
+assert(
+  d.querySelector("#notificationCount")?.classList.contains("hidden"),
+  "La notificación administrativa no desaparece después de abrirla",
 );
 dom.window.location.hash = "#panel-general";
 await new Promise((resolve) => setTimeout(resolve, 20));
@@ -652,6 +685,31 @@ assert(
     Boolean(d.querySelector("#accountBackStore")),
   "La cuenta no usa el panel completo de cliente",
 );
+assert(
+  !d.querySelector("#adminNotificationCenter")?.classList.contains("hidden") &&
+    d.querySelector("#notificationCount")?.textContent === "1",
+  "El cliente no recibe sus notificaciones en la campana",
+);
+rows.user_notifications.push({
+  id: "user-notification-live",
+  user_id: "customer-1",
+  type: "order",
+  title: "Tu pedido está en camino",
+  body: "1× Mesa inox",
+  order_id: "order-1",
+  conversation_id: null,
+  is_read: false,
+  created_at: "2026-08-20T12:05:00Z",
+});
+emitRealtime("user_notifications", {
+  eventType: "INSERT",
+  new: rows.user_notifications.at(-1),
+});
+await new Promise((resolve) => setTimeout(resolve, 160));
+assert(
+  d.querySelector("#notificationCount")?.textContent === "2",
+  "Las novedades del cliente no aparecen en tiempo real",
+);
 d.querySelector("#customerProfileBtn")?.click();
 assert(
   Boolean(d.querySelector("#editAvatar")) &&
@@ -834,6 +892,35 @@ assert(
     adminPublicEmailMigration.includes("public.store_settings") &&
     adminPublicEmailMigration.includes("public.profiles"),
   "La migración del correo público administrativo está incompleta",
+);
+assert(
+  customerNotificationsMigration.includes(
+    "create table if not exists public.user_notifications",
+  ) &&
+    customerNotificationsMigration.includes("orders_notify_status_change") &&
+    customerNotificationsMigration.includes(
+      "support_messages_notify_customer",
+    ) &&
+    customerNotificationsMigration.includes("on delete cascade") &&
+    customerNotificationsMigration.includes("Nueva venta pagada") &&
+    app.includes('isAdmin() ? "admin_notifications" : "user_notifications"') &&
+    app.includes("clearConversationNotifications") &&
+    app.includes("clearOrderNotifications"),
+  "Las notificaciones comerciales de clientes y administración están incompletas",
+);
+assert(
+  sharedEmailFunction.includes("¿Cómo seguimos?") &&
+    sharedEmailFunction.includes("Saldo pendiente") &&
+    sharedEmailFunction.includes("9:00 a 17:00 hs") &&
+    sharedEmailFunction.includes("order_items") &&
+    paymentWebhookFunction.includes("orderSummaryText(order)"),
+  "El correo de confirmación no detalla productos, saldo y próximos pasos",
+);
+assert(
+  styles.includes(
+    "#cuenta.signed-in .account-page-container{width:min(1480px,100%);max-width:none;margin:0 auto}",
+  ),
+  "El panel de cuenta no quedó centrado",
 );
 assert(
   adminNotificationFunction.includes("ADMIN_EMAIL") &&

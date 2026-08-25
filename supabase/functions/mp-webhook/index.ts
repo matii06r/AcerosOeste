@@ -1,6 +1,10 @@
 // @ts-ignore -- Las Edge Functions resuelven imports URL mediante Deno.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { orderEmailHtml, sendTransactionalEmail } from "../_shared/email.ts";
+import {
+  orderEmailHtml,
+  orderSummaryText,
+  sendTransactionalEmail,
+} from "../_shared/email.ts";
 
 async function validSignature(req: Request, dataId: string) {
   const signature = req.headers.get("x-signature") || "";
@@ -212,12 +216,12 @@ Deno.serve(async (req: Request) => {
       if (order?.customer_email && !order.payment_email_sent_at) {
         await sendTransactionalEmail({
           to: order.customer_email,
-          subject: `Pago confirmado · Pedido ${String(order.id).slice(0, 8).toUpperCase()}`,
+          subject: `Pago confirmado · ${orderSummaryText(order).slice(0, 100)}`,
           html: orderEmailHtml(
             "Pago confirmado",
             order.payment_type === "deposit"
-              ? "Recibimos correctamente la seña de tu pedido. Nos comunicaremos para coordinar los próximos pasos."
-              : "Recibimos correctamente el pago de tu pedido. Ya comenzamos a prepararlo.",
+              ? "Recibimos correctamente la seña de tu pedido. Abajo vas a encontrar el detalle, el saldo restante y cómo continuamos."
+              : "Recibimos correctamente el pago completo de tu pedido. Abajo vas a encontrar el detalle y cómo continuamos.",
             order,
           ),
         });

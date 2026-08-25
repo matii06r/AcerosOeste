@@ -1,6 +1,10 @@
 // @ts-ignore -- Las Edge Functions resuelven imports URL mediante Deno.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { orderEmailHtml, sendTransactionalEmail } from "../_shared/email.ts";
+import {
+  orderEmailHtml,
+  orderSummaryText,
+  sendTransactionalEmail,
+} from "../_shared/email.ts";
 
 Deno.serve(async (req: Request) => {
   const origin = req.headers.get("origin") || "";
@@ -38,7 +42,7 @@ Deno.serve(async (req: Request) => {
     if (type !== "in_transit") throw new Error("Notificación inválida");
     const { data: order, error } = await supabase
       .from("orders")
-      .select("*")
+      .select("*, order_items(*)")
       .eq("id", orderId)
       .single();
     if (error || !order?.customer_email) throw new Error("Pedido sin email");
@@ -50,10 +54,10 @@ Deno.serve(async (req: Request) => {
     }
     await sendTransactionalEmail({
       to: order.customer_email,
-      subject: `Tu pedido ${String(order.id).slice(0, 8).toUpperCase()} está en camino`,
+      subject: `Tu pedido está en camino · ${orderSummaryText(order).slice(0, 100)}`,
       html: orderEmailHtml(
         "Tu pedido está en camino",
-        "Aceros Oeste ya despachó tu pedido. Nos comunicaremos con vos para coordinar la entrega.",
+        "Aceros Oeste ya preparó o despachó tu pedido. Nos comunicaremos con vos para coordinar la entrega o el retiro.",
         order,
       ),
     });
