@@ -29,3 +29,6 @@ verify_jwt = false
 
 [functions.retry-feedback-email]
 verify_jwt = false
+
+[functions.delete-invoice-voucher]
+verify_jwt = false

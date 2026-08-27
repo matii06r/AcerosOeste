@@ -320,3 +320,22 @@ npx supabase functions deploy send-invoice-email --no-verify-jwt
 Si Supabase Auth también usa Resend por SMTP, actualizá su contraseña en
 **Authentication > Email > SMTP Settings**. La guía completa está en
 `ACTUALIZACION-V26-CORREOS-Y-ARCHIVO.md`.
+
+## 11. Eliminar comprobantes de compras canceladas (v27)
+
+La v27 agrega la función `delete-invoice-voucher`. En Facturación, el botón
+**Eliminar comprobante** sólo aparece cuando el pedido está cancelado. La
+función vuelve a comprobar en el servidor que quien ejecuta la acción sea
+administrador y que la compra continúe cancelada antes de borrar el registro y
+el PDF privado.
+
+Desplegala con:
+
+```powershell
+npx supabase functions deploy delete-invoice-voucher --project-ref dvisdjvzwbfklrpzsuhe --no-verify-jwt
+```
+
+La eliminación dentro de la web no anula un comprobante emitido en ARCA. Para
+una factura con CAE corresponde documentar la cancelación con la nota de crédito
+indicada por el contador. La guía completa está en
+`ACTUALIZACION-V27-ELIMINAR-COMPROBANTES.md`.

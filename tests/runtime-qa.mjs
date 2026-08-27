@@ -88,6 +88,10 @@ const invoiceEmailFunction = readFileSync(
   new URL("supabase/functions/send-invoice-email/index.ts", root),
   "utf8",
 );
+const deleteInvoiceFunction = readFileSync(
+  new URL("supabase/functions/delete-invoice-voucher/index.ts", root),
+  "utf8",
+);
 const feedbackFunction = readFileSync(
   new URL("supabase/functions/send-feedback/index.ts", root),
   "utf8",
@@ -381,7 +385,7 @@ const executable = html
   .replace('<script src="assets/vendor/supabase.js?v=1"></script>', "")
   .replace('<script src="config.js"></script>', "")
   .replace(
-    '<script src="app.js?v=26"></script>',
+    '<script src="app.js?v=27"></script>',
     `<script>${app.replaceAll("</script>", "<\\/script>")}</script>`,
   );
 const errors = [];
@@ -1059,6 +1063,19 @@ assert(
     updateWithdrawalFunction.includes("resolution_email_error") &&
     updateWithdrawalFunction.includes("emailSent && archiveAfterReply"),
   "El archivo seguro de facturación o arrepentimientos está incompleto",
+);
+assert(
+  app.includes('data-delete-invoice=') &&
+    app.includes('"delete-invoice-voucher"') &&
+    app.includes("Sólo se puede eliminar un comprobante cuando la compra está cancelada") &&
+    app.includes('.or("status.eq.cancelled,billing_status.eq.invoiced")') &&
+    deleteInvoiceFunction.includes('requester?.role !== "admin"') &&
+    deleteInvoiceFunction.includes('order.status !== "cancelled"') &&
+    deleteInvoiceFunction.includes('.from("invoice-documents")') &&
+    deleteInvoiceFunction.includes('.from("invoices")') &&
+    deleteInvoiceFunction.includes('billing_status: billingStatus') &&
+    deleteInvoiceFunction.includes('.eq("type", "invoice")'),
+  "La eliminación segura de comprobantes cancelados está incompleta",
 );
 assert(
   !app.includes("El importe se vuelve a calcular de forma segura en el servidor") &&

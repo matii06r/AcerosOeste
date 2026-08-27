@@ -2949,7 +2949,9 @@ async function openAdminInvoices() {
     return;
   }
   const orders = data || [];
-  const pending = orders.filter((order) => order.billing_status !== "invoiced").length;
+  const pending = orders.filter(
+    (order) => !["invoiced", "not_applicable"].includes(order.billing_status),
+  ).length;
   workspace.innerHTML = `<div class="admin-page-head"><div><p class="eyebrow orange">COMPROBANTES</p><h1>Facturación</h1></div><span class="session-badge">${pending} pendientes</span></div><div class="invoice-admin-list">${orders.length ? orders.map(adminInvoiceOrderMarkup).join("") : '<div class="notice">No hay ventas acreditadas para facturar.</div>'}</div>`;
   document.querySelectorAll("[data-create-invoice]").forEach((button) => {
     button.onclick = () =>
@@ -2963,6 +2965,19 @@ async function openAdminInvoices() {
   document.querySelectorAll("[data-resend-invoice]").forEach((button) => {
     button.onclick = () => resendAdminInvoice(button.dataset.resendInvoice, button);
   });
+  document.querySelectorAll("[data-delete-invoice]").forEach((button) => {
+    button.onclick = () => {
+      const order = orders.find((item) =>
+        (item.invoices || []).some(
+          (invoice) => String(invoice.id) === button.dataset.deleteInvoice,
+        ),
+      );
+      const invoice = (order?.invoices || []).find(
+        (item) => String(item.id) === button.dataset.deleteInvoice,
+      );
+      deleteInvoiceVoucher(invoice, order, button);
+    };
+  });
   document.querySelectorAll("[data-archive-billing]").forEach((button) => {
     button.onclick = () => archiveBillingOrder(button.dataset.archiveBilling, button);
   });
@@ -2974,14 +2989,72 @@ function adminInvoiceOrderMarkup(order) {
     .filter((invoice) => invoice.status !== "cancelled")
     .reduce((sum, invoice) => sum + Number(invoice.gross_amount || 0), 0);
   const hasSentInvoice = invoices.some((invoice) => invoice.status === "sent");
-  return `<article class="invoice-order-card" data-invoice-order-card="${order.id}"><header><div><small>PEDIDO ${escapeHtml(String(order.id).slice(0, 8).toUpperCase())}</small><h3>${escapeHtml(orderProductsLabel(order) || "Compra")}</h3><p>${escapeHtml(order.customer_name || "Cliente")} · ${escapeHtml(order.customer_email || "Sin email")}</p></div><span class="billing-status billing-${escapeHtml(order.billing_status || "pending")}">${order.billing_status === "invoiced" ? "Facturado" : order.billing_status === "partial" ? "Facturación parcial" : "Pendiente"}</span></header><div class="invoice-order-data"><span><small>Condición</small><b>${escapeHtml(billingConditionLabel(order.billing_condition))}</b></span><span><small>Razón social</small><b>${escapeHtml(order.billing_name || order.customer_name || "Sin informar")}</b></span><span><small>Documento</small><b>${escapeHtml([order.billing_document_type, order.billing_document_number].filter(Boolean).join(" ") || "Sin informar")}</b></span><span><small>Total del pedido</small><b>${money(order.subtotal)}</b></span><span><small>Ya registrado</small><b>${money(invoiced)}</b></span></div><div class="invoice-doc-list">${invoices.length ? invoices.map(adminInvoiceDocumentMarkup).join("") : '<small>Todavía no hay comprobantes registrados.</small>'}</div><footer>${order.billing_status === "invoiced" && hasSentInvoice ? `<button class="btn outline" type="button" data-archive-billing="${order.id}">Quitar del panel</button>` : ""}<button class="btn cta" type="button" data-create-invoice="${order.id}">Registrar comprobante</button></footer></article>`;
+  const billingLabel =
+    order.billing_status === "invoiced"
+      ? "Facturado"
+      : order.billing_status === "partial"
+        ? "Facturación parcial"
+        : order.billing_status === "not_applicable"
+          ? "Compra cancelada"
+          : "Pendiente";
+  const canArchive =
+    order.status === "cancelled" ||
+    (order.billing_status === "invoiced" && hasSentInvoice);
+  return `<article class="invoice-order-card" data-invoice-order-card="${order.id}"><header><div><small>PEDIDO ${escapeHtml(String(order.id).slice(0, 8).toUpperCase())}</small><h3>${escapeHtml(orderProductsLabel(order) || "Compra")}</h3><p>${escapeHtml(order.customer_name || "Cliente")} · ${escapeHtml(order.customer_email || "Sin email")}</p></div><span class="billing-status billing-${escapeHtml(order.billing_status || "pending")}">${billingLabel}</span></header><div class="invoice-order-data"><span><small>Condición</small><b>${escapeHtml(billingConditionLabel(order.billing_condition))}</b></span><span><small>Razón social</small><b>${escapeHtml(order.billing_name || order.customer_name || "Sin informar")}</b></span><span><small>Documento</small><b>${escapeHtml([order.billing_document_type, order.billing_document_number].filter(Boolean).join(" ") || "Sin informar")}</b></span><span><small>Total del pedido</small><b>${money(order.subtotal)}</b></span><span><small>Ya registrado</small><b>${money(invoiced)}</b></span></div><div class="invoice-doc-list">${invoices.length ? invoices.map((invoice) => adminInvoiceDocumentMarkup(invoice, order)).join("") : '<small>Todavía no hay comprobantes registrados.</small>'}</div><footer>${canArchive ? `<button class="btn outline" type="button" data-archive-billing="${order.id}">Quitar del panel</button>` : ""}<button class="btn cta" type="button" data-create-invoice="${order.id}">Registrar comprobante</button></footer></article>`;
 }
 
-function adminInvoiceDocumentMarkup(invoice) {
+function adminInvoiceDocumentMarkup(invoice, order) {
   const number = invoice.invoice_number
     ? `${String(invoice.point_of_sale || 0).padStart(5, "0")}-${String(invoice.invoice_number).padStart(8, "0")}`
     : "Sin numeración";
-  return `<div><span><b>${escapeHtml(invoice.invoice_type)}</b><small>${number} · ${money(invoice.gross_amount)} · ${invoice.status === "sent" ? "Enviada" : "Registrada"}</small></span><div class="invoice-document-actions">${invoice.pdf_path ? `<button class="text-button" type="button" data-admin-invoice-download="${escapeHtml(invoice.pdf_path)}">Ver PDF</button>` : ""}${invoice.pdf_path ? `<button class="text-button" type="button" data-resend-invoice="${invoice.id}">${invoice.status === "sent" ? "Reenviar" : "Enviar"}</button>` : ""}</div></div>`;
+  return `<div><span><b>${escapeHtml(invoice.invoice_type)}</b><small>${number} · ${money(invoice.gross_amount)} · ${invoice.status === "sent" ? "Enviada" : "Registrada"}</small></span><div class="invoice-document-actions">${invoice.pdf_path ? `<button class="text-button" type="button" data-admin-invoice-download="${escapeHtml(invoice.pdf_path)}">Ver PDF</button>` : ""}${invoice.pdf_path ? `<button class="text-button" type="button" data-resend-invoice="${invoice.id}">${invoice.status === "sent" ? "Reenviar" : "Enviar"}</button>` : ""}${order.status === "cancelled" ? `<button class="text-button danger-text" type="button" data-delete-invoice="${invoice.id}">Eliminar comprobante</button>` : ""}</div></div>`;
+}
+
+async function deleteInvoiceVoucher(invoice, order, button) {
+  if (!invoice || !order || order.status !== "cancelled")
+    return toast(
+      "Sólo se puede eliminar un comprobante cuando la compra está cancelada.",
+      "error",
+    );
+  const number = invoice.invoice_number
+    ? `${String(invoice.point_of_sale || 0).padStart(5, "0")}-${String(invoice.invoice_number).padStart(8, "0")}`
+    : "sin numeración";
+  if (
+    !(await confirmAction({
+      title: "Eliminar comprobante",
+      message: `${invoice.invoice_type} ${number}: se borrarán el registro y el PDF de la web. Esto no anula un comprobante emitido en ARCA; si tiene CAE, primero corresponde emitir la nota de crédito.`,
+      confirmLabel: "Eliminar comprobante",
+    }))
+  )
+    return;
+  setBusy(button, true, "Eliminando…");
+  const { data, error } = await supabase.functions.invoke(
+    "delete-invoice-voucher",
+    { body: { invoiceId: invoice.id } },
+  );
+  setBusy(button, false);
+  if (error || !data?.deleted) {
+    let message = data?.error;
+    if (!message && error?.context?.json) {
+      try {
+        message = (await error.context.json())?.error;
+      } catch {
+        // Se conserva el mensaje entendible de respaldo.
+      }
+    }
+    return toast(
+      readableFunctionError(
+        message || error?.message,
+        "No se pudo eliminar el comprobante.",
+      ),
+      "error",
+    );
+  }
+  await openAdminInvoices();
+  toast(
+    data.warning || "Comprobante y PDF eliminados.",
+    data.warning ? "error" : "success",
+  );
 }
 
 async function resendAdminInvoice(invoiceId, button) {
@@ -3027,7 +3100,7 @@ async function archiveBillingOrder(orderId, button) {
     .from("orders")
     .update({ billing_archived_at: new Date().toISOString() })
     .eq("id", orderId)
-    .eq("billing_status", "invoiced");
+    .or("status.eq.cancelled,billing_status.eq.invoiced");
   setBusy(button, false);
   if (error) return toast(error.message, "error");
   document.querySelector(`[data-invoice-order-card="${CSS.escape(orderId)}"]`)?.remove();
