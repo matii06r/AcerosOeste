@@ -292,15 +292,22 @@ function readableFunctionError(message, fallback) {
     ? fallback
     : value || fallback;
 }
+const busyButtonMarkup = new WeakMap();
 function setBusy(button, busy, text = "Procesando…") {
   if (!button) return;
   if (busy) {
-    button.dataset.label = button.textContent;
+    if (!busyButtonMarkup.has(button))
+      busyButtonMarkup.set(button, button.innerHTML);
     button.textContent = text;
     button.disabled = true;
+    button.setAttribute("aria-busy", "true");
   } else {
-    button.textContent = button.dataset.label || button.textContent;
+    if (busyButtonMarkup.has(button)) {
+      button.innerHTML = busyButtonMarkup.get(button);
+      busyButtonMarkup.delete(button);
+    }
     button.disabled = false;
+    button.removeAttribute("aria-busy");
   }
 }
 function mapProduct(row) {
@@ -2060,7 +2067,7 @@ function customerOrderMarkup(order) {
     (invoice) => invoice.pdf_path && ["authorized", "sent"].includes(invoice.status),
   );
   const invoiceBlock = invoices.length
-    ? `<div class="purchase-documents"><b>Comprobantes</b>${invoices.map((invoice) => `<button class="invoice-download" type="button" data-invoice-path="${escapeHtml(invoice.pdf_path)}"><span>PDF</span><div><b>${escapeHtml(invoice.invoice_type)}</b><small>${invoice.invoice_number ? `${String(invoice.point_of_sale || 0).padStart(5, "0")}-${String(invoice.invoice_number).padStart(8, "0")}` : "Comprobante disponible"} · ${money(invoice.gross_amount)}</small></div><i>Descargar</i></button>`).join("")}</div>`
+    ? `<div class="purchase-documents"><b>Comprobantes</b>${invoices.map((invoice) => { const number = invoice.invoice_number ? `${String(invoice.point_of_sale || 0).padStart(5, "0")}-${String(invoice.invoice_number).padStart(8, "0")}` : "Comprobante disponible"; return `<button class="invoice-download" type="button" data-invoice-path="${escapeHtml(invoice.pdf_path)}" aria-label="Descargar ${escapeHtml(invoice.invoice_type)} ${escapeHtml(number)}"><span class="invoice-download-icon" aria-hidden="true">PDF</span><span class="invoice-download-details"><strong>${escapeHtml(invoice.invoice_type)}</strong><small>${escapeHtml(number)} · ${money(invoice.gross_amount)}</small></span><span class="invoice-download-action">Descargar</span></button>`; }).join("")}</div>`
     : "";
   const withdrawal = (order.withdrawal_requests || []).find(
     (request) => !["rejected", "closed"].includes(request.status),
@@ -2658,15 +2665,17 @@ function openClientManager() {
 }
 function openClientEditor(id) {
   const client = state.clients.find((item) => item.id === id) || { name: "", category: "Gastronomía", description: "", logo_url: "", images: [], sort_order: 0 };
-  openModal(`<button class="modal-close" data-close>×</button><p class="eyebrow orange">${id ? "EDITAR" : "NUEVO"} CLIENTE</p><h2>${id ? "Actualizar publicación" : "Agregar cliente"}</h2><form id="clientForm" class="form-grid"><div class="field"><label>Nombre</label><input name="name" value="${escapeHtml(client.name)}" required></div><div class="field"><label>Rubro</label><input name="category" value="${escapeHtml(client.category)}"></div><div class="field full"><label>Texto que aparecerá en la página del cliente</label><textarea name="description" rows="8" placeholder="Escribí libremente qué trabajos realizaron, materiales, medidas y detalles del proyecto.">${escapeHtml(client.description)}</textarea><small>Este texto se mostrará exactamente como lo escribas, sin títulos automáticos.</small></div><div class="field"><label>Orden</label><input name="sort_order" type="number" value="${Number(client.sort_order) || 0}"></div><div class="field"><label><input name="is_active" type="checkbox" ${client.is_active === false ? "" : "checked"}> Visible</label></div><div class="field full"><label class="image-upload-label">Logo del cliente<input id="clientLogo" type="file" accept="image/png,image/jpeg,image/webp" hidden></label>${client.logo_url ? `<img class="preview-admin-img" src="${escapeHtml(client.logo_url)}" alt="Logo actual">` : ""}</div><div class="field full"><label class="image-upload-label">Fotos de trabajos<input id="clientPhotos" type="file" accept="image/png,image/jpeg,image/webp" multiple hidden></label><small>Podés agregar varias ahora o volver más adelante. Se mostrarán una debajo de otra.</small><div class="media-admin-grid">${(client.images || []).map((url) => `<label class="media-admin-item"><img src="${escapeHtml(url)}" alt="Trabajo"><span><input type="checkbox" value="${escapeHtml(url)}" data-remove-client-photo> Quitar</span></label>`).join("")}</div></div><button class="btn cta field full">Guardar cliente</button></form>`);
+  openModal(`<button class="modal-close" data-close>×</button><p class="eyebrow orange">${id ? "EDITAR" : "NUEVO"} CLIENTE</p><h2>${id ? "Actualizar publicación" : "Agregar cliente"}</h2><form id="clientForm" class="form-grid"><div class="field"><label>Nombre</label><input name="name" value="${escapeHtml(client.name)}" required></div><div class="field"><label>Rubro</label><input name="category" value="${escapeHtml(client.category)}"></div><div class="field full"><label>Descripción del trabajo</label><textarea name="description" rows="8" placeholder="Trabajos realizados, materiales, medidas y detalles del proyecto.">${escapeHtml(client.description)}</textarea></div><div class="field full"><label class="image-upload-label">Logo del cliente<input id="clientLogo" type="file" accept="image/png,image/jpeg,image/webp" hidden></label>${client.logo_url ? `<img class="preview-admin-img" src="${escapeHtml(client.logo_url)}" alt="Logo actual">` : ""}</div><div class="field full"><label class="image-upload-label">Fotos de trabajos<input id="clientPhotos" type="file" accept="image/png,image/jpeg,image/webp" multiple hidden></label><small>Podés agregar varias ahora o volver más adelante. Se mostrarán una debajo de otra.</small><div class="media-admin-grid">${(client.images || []).map((url) => `<label class="media-admin-item"><img src="${escapeHtml(url)}" alt="Trabajo"><span><input type="checkbox" value="${escapeHtml(url)}" data-remove-client-photo> Quitar</span></label>`).join("")}</div></div><button class="btn cta field full">Guardar cliente</button></form>`);
   document.querySelector("#clientForm").onsubmit = (event) => saveClient(event, client);
 }
 async function saveClient(event, current) {
   event.preventDefault();
   const button = event.submitter;
   const values = Object.fromEntries(new FormData(event.target));
-  values.sort_order = Number(values.sort_order) || 0;
-  values.is_active = Boolean(values.is_active);
+  values.sort_order = current.id
+    ? Number(current.sort_order) || 0
+    : Math.max(0, ...state.clients.map((item) => Number(item.sort_order) || 0)) + 10;
+  values.is_active = true;
   setBusy(button, true, "Guardando…");
   try {
     const logoFile = document.querySelector("#clientLogo").files[0];

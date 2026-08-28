@@ -204,6 +204,18 @@ const rows = {
           product_image_url: "https://example.test/product.jpg",
         },
       ],
+      invoices: [
+        {
+          id: "invoice-1",
+          invoice_type: "Factura A",
+          point_of_sale: 1,
+          invoice_number: 1166598695,
+          gross_amount: 100000,
+          pdf_path: "customer-1/order-1/factura.pdf",
+          status: "sent",
+        },
+      ],
+      withdrawal_requests: [],
     },
   ],
   support_conversations: [],
@@ -277,6 +289,7 @@ function query(table) {
 let authListener;
 let activeSession = null;
 const invokedFunctions = [];
+const openedUrls = [];
 const realtimeSubscriptions = [];
 function emitRealtime(table, payload) {
   realtimeSubscriptions
@@ -323,6 +336,10 @@ const client = {
       upload: async () => ({ error: null }),
       getPublicUrl: () => ({
         data: { publicUrl: "https://example.test/product.jpg" },
+      }),
+      createSignedUrl: async () => ({
+        data: { signedUrl: "https://example.test/factura-firmada.pdf" },
+        error: null,
       }),
     }),
   },
@@ -385,7 +402,7 @@ const executable = html
   .replace('<script src="assets/vendor/supabase.js?v=1"></script>', "")
   .replace('<script src="config.js"></script>', "")
   .replace(
-    '<script src="app.js?v=28"></script>',
+    '<script src="app.js?v=29"></script>',
     `<script>${app.replaceAll("</script>", "<\\/script>")}</script>`,
   );
 const errors = [];
@@ -404,7 +421,10 @@ const dom = new JSDOM(executable, {
     };
     window.supabase = { createClient: () => client };
     window.scrollTo = () => {};
-    window.open = () => null;
+    window.open = (url) => {
+      openedUrls.push(url);
+      return null;
+    };
     window.confirm = () => true;
     window.localStorage.setItem(
       "ao_cart_guest",
@@ -597,6 +617,19 @@ assert(
   "Publicar similar no abre una copia editable en el asistente",
 );
 d.querySelector("#cancelProductEditor")?.click();
+d.querySelector("#clientsBtn")?.click();
+await new Promise((resolve) => setTimeout(resolve, 20));
+d.querySelector('[data-edit-client="client-1"]')?.click();
+assert(
+  Boolean(d.querySelector("#clientForm")) &&
+    !d.querySelector('#clientForm [name="sort_order"]') &&
+    !d.querySelector('#clientForm [name="is_active"]') &&
+    !d.querySelector("#clientForm")?.textContent.includes("sin títulos automáticos") &&
+    !d.querySelector("#clientForm")?.textContent.includes("Orden") &&
+    !d.querySelector("#clientForm")?.textContent.includes("Visible"),
+  "El editor de clientes todavía muestra controles o aclaraciones internas",
+);
+d.querySelector("#modal [data-close]")?.click();
 dom.window.location.hash = "#producto/mesa-inox";
 await new Promise((resolve) => setTimeout(resolve, 40));
 assert(
@@ -784,6 +817,18 @@ assert(
     d.querySelector("#ordersList")?.textContent.includes("1× Mesa inox") &&
     Boolean(d.querySelector(".order-progress")),
   "Mis compras no muestra fotos, productos y seguimiento",
+);
+const invoiceButton = d.querySelector('[data-invoice-path="customer-1/order-1/factura.pdf"]');
+const invoiceMarkup = invoiceButton?.innerHTML;
+invoiceButton?.click();
+await new Promise((resolve) => setTimeout(resolve, 20));
+assert(
+  Boolean(invoiceButton?.querySelector(".invoice-download-icon")) &&
+    Boolean(invoiceButton?.querySelector(".invoice-download-details")) &&
+    Boolean(invoiceButton?.querySelector(".invoice-download-action")) &&
+    invoiceButton?.innerHTML === invoiceMarkup &&
+    openedUrls.includes("https://example.test/factura-firmada.pdf"),
+  "El botón de la factura pierde su diseño después de abrir el PDF",
 );
 const orderChatButton = d.querySelector('[data-customer-order-chat="order-1"]');
 orderChatButton?.click();
@@ -1082,7 +1127,8 @@ assert(
     app.includes('.update({ billing_archived_at: new Date().toISOString() })') &&
     app.includes('.eq("id", order.id)') &&
     styles.includes("min-height:48px;padding:13px 18px") &&
-    styles.includes(".feedback-float span{font-size:16px}"),
+    styles.includes(".feedback-float span{font-size:16px}") &&
+    styles.includes(".invoice-download-details{min-width:0;display:grid;gap:5px}"),
   "El archivo libre de facturación o el botón grande de sugerencias están incompletos",
 );
 assert(
@@ -1143,5 +1189,5 @@ if (errors.length) {
   process.exit(1);
 }
 console.log(
-  "QA OK: tienda, correo verificable, archivo seguro, sugerencias y facturación",
+  "QA OK v29: tienda, usuarios, clientes, pagos, factura estable, correos, sugerencias y administración",
 );

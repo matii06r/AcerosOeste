@@ -121,12 +121,14 @@ Deno.serve(async (req: Request) => {
       .from("product_pricing")
       .select("product_id,vat_rate")
       .in("product_id", ids);
-    const vatByProduct = new Map(
-      (pricingRows || []).map((row) => [row.product_id, Number(row.vat_rate)]),
+    const vatByProduct = new Map<string, number>(
+      (pricingRows || []).map(
+        (row) => [String(row.product_id), Number(row.vat_rate)] as const,
+      ),
     );
     const { error: itemsError } = await supabase.from("order_items").insert(
       normalized.map((x) => {
-        const vatRate = vatByProduct.get(x.id) ?? defaultVatRate;
+        const vatRate = vatByProduct.get(String(x.id)) ?? defaultVatRate;
         const unitNetPrice = Number(x.price) / (1 + vatRate / 100);
         return {
         order_id: order.id,
