@@ -2979,7 +2979,13 @@ async function openAdminInvoices() {
     };
   });
   document.querySelectorAll("[data-archive-billing]").forEach((button) => {
-    button.onclick = () => archiveBillingOrder(button.dataset.archiveBilling, button);
+    button.onclick = () =>
+      archiveBillingOrder(
+        orders.find(
+          (order) => String(order.id) === button.dataset.archiveBilling,
+        ),
+        button,
+      );
   });
 }
 
@@ -2988,7 +2994,6 @@ function adminInvoiceOrderMarkup(order) {
   const invoiced = invoices
     .filter((invoice) => invoice.status !== "cancelled")
     .reduce((sum, invoice) => sum + Number(invoice.gross_amount || 0), 0);
-  const hasSentInvoice = invoices.some((invoice) => invoice.status === "sent");
   const billingLabel =
     order.billing_status === "invoiced"
       ? "Facturado"
@@ -2997,10 +3002,7 @@ function adminInvoiceOrderMarkup(order) {
         : order.billing_status === "not_applicable"
           ? "Compra cancelada"
           : "Pendiente";
-  const canArchive =
-    order.status === "cancelled" ||
-    (order.billing_status === "invoiced" && hasSentInvoice);
-  return `<article class="invoice-order-card" data-invoice-order-card="${order.id}"><header><div><small>PEDIDO ${escapeHtml(String(order.id).slice(0, 8).toUpperCase())}</small><h3>${escapeHtml(orderProductsLabel(order) || "Compra")}</h3><p>${escapeHtml(order.customer_name || "Cliente")} · ${escapeHtml(order.customer_email || "Sin email")}</p></div><span class="billing-status billing-${escapeHtml(order.billing_status || "pending")}">${billingLabel}</span></header><div class="invoice-order-data"><span><small>Condición</small><b>${escapeHtml(billingConditionLabel(order.billing_condition))}</b></span><span><small>Razón social</small><b>${escapeHtml(order.billing_name || order.customer_name || "Sin informar")}</b></span><span><small>Documento</small><b>${escapeHtml([order.billing_document_type, order.billing_document_number].filter(Boolean).join(" ") || "Sin informar")}</b></span><span><small>Total del pedido</small><b>${money(order.subtotal)}</b></span><span><small>Ya registrado</small><b>${money(invoiced)}</b></span></div><div class="invoice-doc-list">${invoices.length ? invoices.map((invoice) => adminInvoiceDocumentMarkup(invoice, order)).join("") : '<small>Todavía no hay comprobantes registrados.</small>'}</div><footer>${canArchive ? `<button class="btn outline" type="button" data-archive-billing="${order.id}">Quitar del panel</button>` : ""}<button class="btn cta" type="button" data-create-invoice="${order.id}">Registrar comprobante</button></footer></article>`;
+  return `<article class="invoice-order-card" data-invoice-order-card="${order.id}"><header><div><small>PEDIDO ${escapeHtml(String(order.id).slice(0, 8).toUpperCase())}</small><h3>${escapeHtml(orderProductsLabel(order) || "Compra")}</h3><p>${escapeHtml(order.customer_name || "Cliente")} · ${escapeHtml(order.customer_email || "Sin email")}</p></div><span class="billing-status billing-${escapeHtml(order.billing_status || "pending")}">${billingLabel}</span></header><div class="invoice-order-data"><span><small>Condición</small><b>${escapeHtml(billingConditionLabel(order.billing_condition))}</b></span><span><small>Razón social</small><b>${escapeHtml(order.billing_name || order.customer_name || "Sin informar")}</b></span><span><small>Documento</small><b>${escapeHtml([order.billing_document_type, order.billing_document_number].filter(Boolean).join(" ") || "Sin informar")}</b></span><span><small>Total del pedido</small><b>${money(order.subtotal)}</b></span><span><small>Ya registrado</small><b>${money(invoiced)}</b></span></div><div class="invoice-doc-list">${invoices.length ? invoices.map((invoice) => adminInvoiceDocumentMarkup(invoice, order)).join("") : '<small>Todavía no hay comprobantes registrados.</small>'}</div><footer><button class="btn outline" type="button" data-archive-billing="${order.id}">Quitar del panel</button><button class="btn cta" type="button" data-create-invoice="${order.id}">Registrar comprobante</button></footer></article>`;
 }
 
 function adminInvoiceDocumentMarkup(invoice, order) {
@@ -3085,12 +3087,17 @@ async function resendAdminInvoice(invoiceId, button) {
   toast("Factura enviada al cliente.", "success");
 }
 
-async function archiveBillingOrder(orderId, button) {
+async function archiveBillingOrder(order, button) {
+  if (!order) return toast("No pudimos encontrar este pedido.", "error");
+  const pending = !["invoiced", "not_applicable"].includes(
+    order.billing_status,
+  );
   if (
     !(await confirmAction({
       title: "Quitar facturación del panel",
-      message:
-        "El detalle dejará de verse en esta lista, pero la factura y el pedido se conservarán.",
+      message: pending
+        ? "El registro dejará de verse en Facturación, pero seguirá pendiente y se conservarán el pedido y sus datos. Esta acción no genera una factura ni lo marca como facturado."
+        : "El detalle dejará de verse en esta lista, pero la factura y el pedido se conservarán.",
       confirmLabel: "Quitar del panel",
     }))
   )
@@ -3099,11 +3106,10 @@ async function archiveBillingOrder(orderId, button) {
   const { error } = await supabase
     .from("orders")
     .update({ billing_archived_at: new Date().toISOString() })
-    .eq("id", orderId)
-    .or("status.eq.cancelled,billing_status.eq.invoiced");
+    .eq("id", order.id);
   setBusy(button, false);
   if (error) return toast(error.message, "error");
-  document.querySelector(`[data-invoice-order-card="${CSS.escape(orderId)}"]`)?.remove();
+  await openAdminInvoices();
   toast("Detalle quitado del panel de facturación.", "success");
 }
 

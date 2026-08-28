@@ -385,7 +385,7 @@ const executable = html
   .replace('<script src="assets/vendor/supabase.js?v=1"></script>', "")
   .replace('<script src="config.js"></script>', "")
   .replace(
-    '<script src="app.js?v=27"></script>',
+    '<script src="app.js?v=28"></script>',
     `<script>${app.replaceAll("</script>", "<\\/script>")}</script>`,
   );
 const errors = [];
@@ -1068,7 +1068,6 @@ assert(
   app.includes('data-delete-invoice=') &&
     app.includes('"delete-invoice-voucher"') &&
     app.includes("Sólo se puede eliminar un comprobante cuando la compra está cancelada") &&
-    app.includes('.or("status.eq.cancelled,billing_status.eq.invoiced")') &&
     deleteInvoiceFunction.includes('requester?.role !== "admin"') &&
     deleteInvoiceFunction.includes('order.status !== "cancelled"') &&
     deleteInvoiceFunction.includes('.from("invoice-documents")') &&
@@ -1076,6 +1075,15 @@ assert(
     deleteInvoiceFunction.includes('billing_status: billingStatus') &&
     deleteInvoiceFunction.includes('.eq("type", "invoice")'),
   "La eliminación segura de comprobantes cancelados está incompleta",
+);
+assert(
+  app.includes('<button class="btn outline" type="button" data-archive-billing="${order.id}">Quitar del panel</button>') &&
+    app.includes("Esta acción no genera una factura ni lo marca como facturado.") &&
+    app.includes('.update({ billing_archived_at: new Date().toISOString() })') &&
+    app.includes('.eq("id", order.id)') &&
+    styles.includes("min-height:48px;padding:13px 18px") &&
+    styles.includes(".feedback-float span{font-size:16px}"),
+  "El archivo libre de facturación o el botón grande de sugerencias están incompletos",
 );
 assert(
   !app.includes("El importe se vuelve a calcular de forma segura en el servidor") &&

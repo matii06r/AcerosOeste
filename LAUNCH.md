@@ -339,3 +339,14 @@ La eliminación dentro de la web no anula un comprobante emitido en ARCA. Para
 una factura con CAE corresponde documentar la cancelación con la nota de crédito
 indicada por el contador. La guía completa está en
 `ACTUALIZACION-V27-ELIMINAR-COMPROBANTES.md`.
+
+## 12. Archivo de facturación y sugerencias visibles (v28)
+
+La v28 permite usar **Quitar del panel** sobre cualquier registro de
+Facturación, incluso cuando está pendiente o el cliente ya ocultó la compra de
+su historial. La acción sólo completa `billing_archived_at`: no borra el pedido,
+no genera una factura y no cambia su estado fiscal.
+
+También aumenta el tamaño del acceso flotante **Sugerencias** en computadora y
+celular. No requiere una migración ni una Edge Function nueva. La guía de
+actualización está en `ACTUALIZACION-V28-ARCHIVO-Y-SUGERENCIAS.md`.
