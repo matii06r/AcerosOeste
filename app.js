@@ -1675,7 +1675,6 @@ async function startPayment(event) {
         paymentType: form.paymentType,
         customer: {
           name: form.name,
-          email: form.email,
           phone: form.phone,
           billing: {
             condition: needsFiscalInvoice

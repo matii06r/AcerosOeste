@@ -213,9 +213,23 @@ Deno.serve(async (req: Request) => {
         .select("*, order_items(*)")
         .eq("id", orderId)
         .single();
-      if (order?.customer_email && !order.payment_email_sent_at) {
-        await sendTransactionalEmail({
-          to: order.customer_email,
+      if (order && !order.payment_email_sent_at) {
+        let recipientEmail = String(order.customer_email || "")
+          .trim()
+          .toLowerCase();
+        if (order.user_id) {
+          const { data: accountData } = await supabase.auth.admin.getUserById(
+            order.user_id,
+          );
+          const accountEmail = String(accountData?.user?.email || "")
+            .trim()
+            .toLowerCase();
+          if (accountEmail) recipientEmail = accountEmail;
+        }
+        if (!/^\S+@\S+\.\S+$/.test(recipientEmail))
+          throw new Error("Pedido sin email válido del comprador");
+        const delivery = await sendTransactionalEmail({
+          to: recipientEmail,
           subject: `Pago confirmado · ${orderSummaryText(order).slice(0, 100)}`,
           html: orderEmailHtml(
             "Pago confirmado",
@@ -227,8 +241,15 @@ Deno.serve(async (req: Request) => {
         });
         await supabase
           .from("orders")
-          .update({ payment_email_sent_at: new Date().toISOString() })
+          .update({
+            customer_email: recipientEmail,
+            payment_email_sent_at: new Date().toISOString(),
+          })
           .eq("id", order.id);
+        console.log("Confirmación enviada al comprador", {
+          orderId: order.id,
+          resendId: delivery.id,
+        });
       }
     }
 

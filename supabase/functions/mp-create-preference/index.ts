@@ -16,7 +16,7 @@ Deno.serve(async (req: Request) => {
       throw new Error("El carrito está vacío");
     if (!["full", "deposit"].includes(paymentType))
       throw new Error("Tipo de pago inválido");
-    if (!customer?.name || !customer?.email || !customer?.phone)
+    if (!customer?.name || !customer?.phone)
       throw new Error("Faltan datos del comprador");
     const billing = customer?.billing || {};
     const billingCondition = String(
@@ -58,6 +58,9 @@ Deno.serve(async (req: Request) => {
       : { data: { user: null }, error: new Error("Sin sesión") };
     if (authError || !user)
       throw new Error("Iniciá sesión antes de continuar con el pago");
+    const accountEmail = String(user.email || "").trim().toLowerCase();
+    if (!/^\S+@\S+\.\S+$/.test(accountEmail))
+      throw new Error("Tu cuenta no tiene un email válido");
     const ids = items.map((i: { productId: string }) => i.productId);
     const { data: products, error } = await supabase
       .from("products")
@@ -95,7 +98,7 @@ Deno.serve(async (req: Request) => {
         deposit_percentage: paymentType === "deposit" ? percentage : null,
         amount_to_pay: amount,
         customer_name: customer.name,
-        customer_email: customer.email,
+        customer_email: accountEmail,
         customer_phone: customer.phone,
         billing_condition: billingCondition,
         billing_name: String(billing.name || customer.name).trim(),
@@ -176,7 +179,7 @@ Deno.serve(async (req: Request) => {
       },
       body: JSON.stringify({
         items: mercadoPagoItems,
-        payer: { name: customer.name, email: customer.email },
+        payer: { name: customer.name, email: accountEmail },
         external_reference: order.id,
         back_urls: {
           success: `${site}/#checkout/exito`,

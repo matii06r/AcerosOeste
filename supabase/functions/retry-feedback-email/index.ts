@@ -58,7 +58,6 @@ Deno.serve(async (req: Request) => {
     try {
       await sendTransactionalEmail({
         to: adminEmail,
-        bccAdmin: false,
         replyTo: feedback.email,
         subject: `Sugerencia sobre ${category} — ${feedback.name}`,
         html: `<div style="font-family:Arial,sans-serif;max-width:640px;margin:auto;background:#07111c;color:#eef4fa;padding:32px;border-radius:12px"><p style="color:#f56b18;font-weight:700;letter-spacing:1px">ACEROS OESTE</p><h1>Nueva sugerencia</h1><div style="padding:18px;background:#101d2a;border-left:4px solid #f56b18;border-radius:8px"><p><b>De:</b> ${escapeHtml(feedback.name)}</p><p><b>Email:</b> ${escapeHtml(feedback.email)}</p><p><b>Tema:</b> ${escapeHtml(category)}</p>${feedback.order_reference ? `<p><b>Pedido:</b> ${escapeHtml(feedback.order_reference)}</p>` : ""}<p style="white-space:pre-wrap;line-height:1.7">${escapeHtml(feedback.message)}</p></div><p style="color:#8fa1b1;font-size:12px">Podés responder este correo para contactar a la persona.</p></div>`,

@@ -402,7 +402,7 @@ const executable = html
   .replace('<script src="assets/vendor/supabase.js?v=1"></script>', "")
   .replace('<script src="config.js"></script>', "")
   .replace(
-    '<script src="app.js?v=29"></script>',
+    '<script src="app.js?v=30"></script>',
     `<script>${app.replaceAll("</script>", "<\\/script>")}</script>`,
   );
 const errors = [];
@@ -1006,6 +1006,27 @@ assert(
     paymentWebhookFunction.includes("orderSummaryText(order)"),
   "El correo de confirmación no detalla productos, saldo y próximos pasos",
 );
+const checkoutCustomerStart = app.indexOf("customer: {");
+const checkoutCustomerEnd = app.indexOf("billing: {", checkoutCustomerStart);
+const checkoutCustomerPayload = app.slice(
+  checkoutCustomerStart,
+  checkoutCustomerEnd,
+);
+assert(
+  checkoutCustomerStart >= 0 &&
+    checkoutCustomerEnd > checkoutCustomerStart &&
+    !checkoutCustomerPayload.includes("email:") &&
+    paymentFunction.includes('const accountEmail = String(user.email || "")') &&
+    paymentFunction.includes("customer_email: accountEmail") &&
+    paymentFunction.includes("payer: { name: customer.name, email: accountEmail }") &&
+    !paymentFunction.includes("customer_email: customer.email") &&
+    paymentWebhookFunction.includes("supabase.auth.admin.getUserById") &&
+    paymentWebhookFunction.includes("to: recipientEmail") &&
+    sharedEmailFunction.includes("to: [recipient]") &&
+    !sharedEmailFunction.includes("bcc:") &&
+    !sharedEmailFunction.includes("bccAdmin"),
+  "La confirmación de compra no está aislada al email autenticado del comprador",
+);
 assert(
   styles.includes(
     "#cuenta.signed-in .account-page-container{width:min(1480px,100%);max-width:none;margin:0 auto}",
@@ -1189,5 +1210,5 @@ if (errors.length) {
   process.exit(1);
 }
 console.log(
-  "QA OK v29: tienda, usuarios, clientes, pagos, factura estable, correos, sugerencias y administración",
+  "QA OK v30: tienda, pagos, correo exclusivo al comprador, facturación y administración",
 );

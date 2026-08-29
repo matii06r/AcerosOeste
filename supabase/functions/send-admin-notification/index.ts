@@ -64,7 +64,7 @@ Deno.serve(async (req: Request) => {
     const actor =
       actorProfile?.full_name?.trim() || authData.user.email || "Un cliente";
     const adminEmail =
-      Deno.env.get("ADMIN_EMAIL") || "gestionacerosoeste@gmail.com";
+      Deno.env.get("ADMIN_EMAIL") || "gestionacerosoestee@gmail.com";
     let subject = "Nueva consulta en Aceros Oeste";
     let heading = "Nueva consulta";
     let content = "";
@@ -97,7 +97,6 @@ Deno.serve(async (req: Request) => {
         to: adminEmail,
         subject,
         html: notificationEmailHtml(heading, actor, content, actionUrl),
-        bccAdmin: false,
       });
       await supabase
         .from("questions")
@@ -121,7 +120,6 @@ Deno.serve(async (req: Request) => {
         to: adminEmail,
         subject,
         html: notificationEmailHtml(heading, actor, content, actionUrl),
-        bccAdmin: false,
       });
       await supabase
         .from("support_messages")
@@ -137,4 +135,3 @@ Deno.serve(async (req: Request) => {
     );
   }
 });
-

@@ -2,7 +2,6 @@ type EmailInput = {
   to: string;
   subject: string;
   html: string;
-  bccAdmin?: boolean;
   replyTo?: string;
 };
 
@@ -14,6 +13,9 @@ export async function sendTransactionalEmail(input: EmailInput) {
   if (!apiKey || !from) {
     throw new Error("Faltan RESEND_API_KEY o FROM_EMAIL");
   }
+  const recipient = String(input.to || "").trim().toLowerCase();
+  if (!/^\S+@\S+\.\S+$/.test(recipient))
+    throw new Error("El destinatario del correo no es válido");
   const response = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: {
@@ -22,8 +24,7 @@ export async function sendTransactionalEmail(input: EmailInput) {
     },
     body: JSON.stringify({
       from,
-      to: [input.to],
-      ...(input.bccAdmin === false ? {} : { bcc: [adminEmail] }),
+      to: [recipient],
       reply_to: input.replyTo || adminEmail,
       subject: input.subject,
       html: input.html,
@@ -38,6 +39,14 @@ export async function sendTransactionalEmail(input: EmailInput) {
       throw new Error("La API key de Resend es inválida o fue revocada");
     throw new Error(`Resend rechazó el correo (${response.status})`);
   }
+  const result = await response.json().catch(() => null);
+  return {
+    id:
+      result && typeof result === "object" && "id" in result
+        ? String(result.id || "") || null
+        : null,
+    recipient,
+  };
 }
 
 const escapeHtml = (value: unknown) =>
