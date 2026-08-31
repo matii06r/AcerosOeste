@@ -6,6 +6,8 @@ const money = (value) =>
   }).format(Number(value) || 0);
 const ADMIN_CONTACT_EMAIL = "gestionacerosoestee@gmail.com";
 const LEGACY_ADMIN_EMAIL = "gestionacerosoeste@gmail.com";
+const TERMS_VERSION = "2026-08-31-v1";
+const PRIMARY_WHATSAPP = "5491161781074";
 const hasSupabaseConfig = Boolean(
   window.ACEROS_CONFIG?.SUPABASE_URL &&
     window.ACEROS_CONFIG?.SUPABASE_PUBLISHABLE_KEY,
@@ -108,7 +110,8 @@ const state = {
   cart: safeRead("ao_cart_guest", []),
   settings: {
     deposit_percentage: 50,
-    freight_whatsapp: "5491134322199",
+    freight_whatsapp: PRIMARY_WHATSAPP,
+    sales_whatsapp: PRIMARY_WHATSAPP,
     contact_email: ADMIN_CONTACT_EMAIL,
     vat_rate: 21,
     payment_fee_rate: 7,
@@ -147,6 +150,12 @@ const accountDisplayEmail = () =>
   isAdmin()
     ? normalizedContactEmail(state.settings?.contact_email)
     : String(state.user?.email || "").trim();
+const normalizedWhatsapp = (value) => {
+  const digits = String(value || "").replace(/\D/g, "");
+  return !digits || ["1134322199", "5491134322199"].includes(digits)
+    ? PRIMARY_WHATSAPP
+    : digits;
+};
 const cartStorageKey = () => `ao_cart_${state.user?.id || "guest"}`;
 const pendingCheckoutKey = "ao_pending_checkout";
 const storeCacheKey = "ao_store_cache_v1";
@@ -360,7 +369,12 @@ function restoreStoreCache() {
   state.products = cached.products;
   state.categories = Array.isArray(cached.categories) ? cached.categories : [];
   state.clients = Array.isArray(cached.clients) ? cached.clients : [];
-  if (cached.settings) state.settings = cached.settings;
+  if (cached.settings)
+    state.settings = {
+      ...cached.settings,
+      freight_whatsapp: normalizedWhatsapp(cached.settings.freight_whatsapp),
+      sales_whatsapp: normalizedWhatsapp(cached.settings.sales_whatsapp),
+    };
   state.loading = false;
   state.usingFallback = false;
   return true;
@@ -424,6 +438,8 @@ async function loadStoreData({ route = true, retry = true } = {}) {
     state.settings = {
       ...settings,
       contact_email: normalizedContactEmail(settings.contact_email),
+      freight_whatsapp: normalizedWhatsapp(settings.freight_whatsapp),
+      sales_whatsapp: normalizedWhatsapp(settings.sales_whatsapp),
     };
   }
   state.loading = false;
@@ -1198,7 +1214,7 @@ async function showProductPage(slug) {
     '<div class="empty">Cargando producto…</div>';
   const questions = await loadQuestions(product.id);
   page.querySelector("#productPageContent").innerHTML =
-    `<div class="product-page-layout">${productGallery(product)}<div class="product-page-info"><p class="eyebrow orange">${escapeHtml(product.category)}</p><h1>${escapeHtml(product.name)}</h1><div class="price">${money(product.price)}</div><small class="final-price-note">Precio final al público · impuestos incluidos</small><div class="stock-line"><span class="badge ${product.stock < 3 ? "low" : ""}" style="position:static">${product.stock ? `${product.stock} unidades disponibles` : "Fabricación a pedido"}</span><small>SKU ${escapeHtml(product.sku)}</small></div><p>${escapeHtml(product.desc)}</p><div class="product-specs"><div><b>Material</b><br>Acero inoxidable</div><div><b>Fabricación</b><br>Nacional</div><div><b>Modalidad</b><br>${escapeHtml(saleTypeLabel(product.saleType))}</div><div><b>Entrega</b><br>A coordinar</div></div><p>${escapeHtml(product.details)}</p><div class="product-legal-note">${product.saleType === "standard" ? "Producto estándar sujeto a las condiciones de compra y al derecho de arrepentimiento cuando corresponda." : "Este producto puede fabricarse siguiendo medidas o especificaciones particulares. Las condiciones se informarán y aprobarán antes de iniciar la fabricación."}</div><div class="stack"><button class="btn cta" data-add="${product.id}" ${!product.stock ? "disabled" : ""}>Agregar al carrito</button><a class="btn secondary" target="_blank" rel="noopener" href="https://wa.me/${state.settings.sales_whatsapp || "5491134322199"}?text=${encodeURIComponent("Hola Acerosoeste, quiero consultar por " + product.name)}">Consultar por WhatsApp</a>${isAdmin() && !String(product.id).startsWith("demo-") ? `<button class="btn outline" data-edit="${product.id}">Editar producto</button>` : ""}</div></div></div><div class="questions"><p class="eyebrow orange">PREGUNTAS</p><h2>Preguntá lo que necesitás saber</h2>${state.user ? `<form id="questionForm" class="question-form"><input name="question" maxlength="500" placeholder="Escribí tu pregunta sobre este producto..." required><button class="btn cta">Preguntar</button></form>` : '<div class="notice">Iniciá sesión para publicar una pregunta.</div>'}<div class="question-list">${renderQuestionList(questions)}</div></div>`;
+    `<div class="product-page-layout">${productGallery(product)}<div class="product-page-info"><p class="eyebrow orange">${escapeHtml(product.category)}</p><h1>${escapeHtml(product.name)}</h1><div class="price">${money(product.price)}</div><small class="final-price-note">Precio final al público · impuestos incluidos</small><div class="stock-line"><span class="badge ${product.stock < 3 ? "low" : ""}" style="position:static">${product.stock ? `${product.stock} unidades disponibles` : "Fabricación a pedido"}</span><small>SKU ${escapeHtml(product.sku)}</small></div><p>${escapeHtml(product.desc)}</p><div class="product-specs"><div><b>Material</b><br>Acero inoxidable</div><div><b>Fabricación</b><br>Nacional</div><div><b>Modalidad</b><br>${escapeHtml(saleTypeLabel(product.saleType))}</div><div><b>Entrega</b><br>A coordinar</div></div><p>${escapeHtml(product.details)}</p><div class="product-legal-note">${product.saleType === "standard" ? "Producto estándar sujeto a las condiciones de compra y al derecho de arrepentimiento cuando corresponda." : "Este producto puede fabricarse siguiendo medidas o especificaciones particulares. Las condiciones se informarán y aprobarán antes de iniciar la fabricación."}</div><div class="stack"><button class="btn cta" data-add="${product.id}" ${!product.stock ? "disabled" : ""}>Agregar al carrito</button><a class="btn secondary" target="_blank" rel="noopener" href="https://wa.me/${state.settings.sales_whatsapp || PRIMARY_WHATSAPP}?text=${encodeURIComponent("Hola Acerosoeste, quiero consultar por " + product.name)}">Consultar por WhatsApp</a>${isAdmin() && !String(product.id).startsWith("demo-") ? `<button class="btn outline" data-edit="${product.id}">Editar producto</button>` : ""}</div></div></div><div class="questions"><p class="eyebrow orange">PREGUNTAS</p><h2>Preguntá lo que necesitás saber</h2>${state.user ? `<form id="questionForm" class="question-form"><input name="question" maxlength="500" placeholder="Escribí tu pregunta sobre este producto..." required><button class="btn cta">Preguntar</button></form>` : '<div class="notice">Iniciá sesión para publicar una pregunta.</div>'}<div class="question-list">${renderQuestionList(questions)}</div></div>`;
   document.querySelectorAll("[data-media]").forEach((button) => {
     button.onclick = () => {
       const url = button.dataset.media;
@@ -1361,11 +1377,20 @@ function handleRoute() {
     toast("Email confirmado. Ya podés usar tu cuenta.", "success");
   } else {
     showMainSections();
-    renderCheckoutStatus(route);
+    renderCheckoutStatus(hash);
   }
 }
 async function renderCheckoutStatus(hash) {
-  if (hash === "checkout/exito") {
+  const route = hash.split("?")[0];
+  const query = hash.includes("?") ? hash.slice(hash.indexOf("?") + 1) : "";
+  const checkoutStatus = route.startsWith("checkout/")
+    ? route.slice("checkout/".length)
+    : route === "inicio"
+      ? new URLSearchParams(query).get("checkout")
+      : null;
+  if (checkoutStatus && route === "inicio")
+    history.replaceState(null, "", "/#inicio");
+  if (checkoutStatus === "exito") {
     toast("Confirmando el pago y actualizando tu carrito…", "info");
     const cleared = await syncPaidCheckoutCart({ retry: true, notify: true });
     if (!cleared)
@@ -1373,10 +1398,10 @@ async function renderCheckoutStatus(hash) {
         "El pago está siendo confirmado. El carrito se actualizará automáticamente al acreditarse.",
         "info",
       );
-  } else if (hash === "checkout/error") {
+  } else if (checkoutStatus === "error") {
     localStorage.removeItem(pendingCheckoutKey);
     toast("El pago no pudo completarse. Tu carrito sigue guardado.", "error");
-  } else if (hash === "checkout/pendiente") {
+  } else if (checkoutStatus === "pendiente") {
     toast(
       "El pago quedó pendiente. El carrito se limpiará cuando Mercado Pago lo acredite.",
       "info",
@@ -1615,7 +1640,7 @@ async function openCheckout(event) {
     document.querySelector("[name=paymentType]:checked")?.value || "full";
   closeCart();
   openModal(
-    `<button class="modal-close" data-close>×</button><p class="eyebrow orange">PAGO SEGURO</p><h2>Datos para tu pedido</h2><form id="checkoutForm" class="form-grid"><div class="field full"><label>Nombre completo</label><input name="name" value="${escapeHtml(state.profile?.full_name || "")}" required></div><div class="field"><label>Email de la cuenta</label><input name="email" type="email" value="${escapeHtml(state.user?.email || "")}" readonly required></div><div class="field"><label>Teléfono</label><input name="phone" value="${escapeHtml(state.profile?.phone || "")}" required></div><label class="field full checkout-invoice-toggle"><input id="needsFiscalInvoice" name="needsFiscalInvoice" type="checkbox" value="yes"><span><b>Necesito el comprobante con CUIT o razón social</b><small>Completá estos datos sólo si la compra no debe emitirse a consumidor final.</small></span></label><div id="checkoutFiscalFields" class="form-grid field full hidden"><div class="field"><label>Condición fiscal</label><select name="billingCondition"><option value="monotributista">Monotributista</option><option value="responsable_inscripto">Responsable inscripto</option><option value="exento">Exento</option></select></div><div class="field"><label>Razón social</label><input name="billingName" value="${escapeHtml(state.profile?.full_name || "")}"></div><div class="field"><label>Tipo de documento</label><select name="billingDocumentType"><option value="CUIT">CUIT</option><option value="CUIL">CUIL</option><option value="DNI">DNI</option></select></div><div class="field"><label>Número</label><input name="billingDocumentNumber" inputmode="numeric" maxlength="14" placeholder="Sin puntos ni guiones"></div><div class="field full"><label>Domicilio fiscal</label><input name="billingAddress" autocomplete="street-address" placeholder="Calle, número, localidad y provincia"></div></div><input name="paymentType" type="hidden" value="${paymentType}"><button class="btn cta field full" type="submit">Continuar a Mercado Pago</button></form>`,
+    `<button class="modal-close" data-close>×</button><p class="eyebrow orange">PAGO SEGURO</p><h2>Datos para tu pedido</h2><form id="checkoutForm" class="form-grid"><div class="field full"><label>Nombre completo</label><input name="name" value="${escapeHtml(state.profile?.full_name || "")}" required></div><div class="field"><label>Email de la cuenta</label><input name="email" type="email" value="${escapeHtml(state.user?.email || "")}" readonly required></div><div class="field"><label>Teléfono</label><input name="phone" value="${escapeHtml(state.profile?.phone || "")}" required></div><label class="field full checkout-invoice-toggle"><input id="needsFiscalInvoice" name="needsFiscalInvoice" type="checkbox" value="yes"><span><b>Quiero que el comprobante salga con CUIT o razón social</b><small>Todas las compras reciben comprobante. Marcá esta opción sólo para utilizar datos fiscales especiales; no modifica el total.</small></span></label><div id="checkoutFiscalFields" class="form-grid field full hidden"><div class="field"><label>Condición fiscal</label><select name="billingCondition"><option value="monotributista">Monotributista</option><option value="responsable_inscripto">Responsable inscripto</option><option value="exento">Exento</option></select></div><div class="field"><label>Razón social</label><input name="billingName" value="${escapeHtml(state.profile?.full_name || "")}"></div><div class="field"><label>Tipo de documento</label><select name="billingDocumentType"><option value="CUIT">CUIT</option><option value="CUIL">CUIL</option><option value="DNI">DNI</option></select></div><div class="field"><label>Número</label><input name="billingDocumentNumber" inputmode="numeric" maxlength="14" placeholder="Sin puntos ni guiones"></div><div class="field full"><label>Domicilio fiscal</label><input name="billingAddress" autocomplete="street-address" placeholder="Calle, número, localidad y provincia"></div></div><label class="field full checkout-terms-toggle"><input id="acceptTerms" name="acceptTerms" type="checkbox" value="yes" required><span><b>Leí y acepto los términos y condiciones de compra</b><small>Incluyen precio final, seña, materiales, mano de obra, modificaciones, comprobantes, entrega y arrepentimiento. <a href="#politicas" target="_blank" rel="noopener">Leer los términos completos</a>.</small></span></label><input name="termsVersion" type="hidden" value="${TERMS_VERSION}"><input name="paymentType" type="hidden" value="${paymentType}"><button class="btn cta field full" type="submit">Aceptar y continuar a Mercado Pago</button></form>`,
   );
   const invoiceToggle = document.querySelector("#needsFiscalInvoice");
   const fiscalFields = document.querySelector("#checkoutFiscalFields");
@@ -1632,6 +1657,11 @@ async function startPayment(event) {
   const button = event.submitter,
     form = Object.fromEntries(new FormData(event.target));
   const needsFiscalInvoice = form.needsFiscalInvoice === "yes";
+  if (form.acceptTerms !== "yes" || form.termsVersion !== TERMS_VERSION)
+    return toast(
+      "Leé y aceptá los términos y condiciones para continuar.",
+      "error",
+    );
   if (
     needsFiscalInvoice &&
     (!String(form.billingName || "").trim() ||
@@ -1673,6 +1703,10 @@ async function startPayment(event) {
           quantity: item.qty,
         })),
         paymentType: form.paymentType,
+        terms: {
+          accepted: true,
+          version: TERMS_VERSION,
+        },
         customer: {
           name: form.name,
           phone: form.phone,
@@ -1729,7 +1763,7 @@ function openFreight(total) {
       ),
       message = `Hola Acerosoeste, quiero coordinar esta compra:\n\n${lines.join("\n")}\n\nTotal: ${money(total)}\nEntrega: ${d.date} a las ${d.time}\nDirección: ${d.address}\nNombre: ${d.name}\nTeléfono: ${d.phone}\nNotas: ${d.notes || "-"}`;
     window.open(
-      `https://wa.me/${state.settings.freight_whatsapp || "5491134322199"}?text=${encodeURIComponent(message)}`,
+      `https://wa.me/${state.settings.freight_whatsapp || PRIMARY_WHATSAPP}?text=${encodeURIComponent(message)}`,
       "_blank",
       "noopener",
     );
@@ -2700,7 +2734,7 @@ function openSettings() {
   setAdminActive("settings");
   state.activeConversationId = null;
   const ws = document.querySelector("#adminWorkspace");
-  ws.innerHTML = `<div class="admin-page-head"><div><p class="eyebrow orange">AJUSTES</p><h1>Configuración de la tienda</h1><p>Valores comerciales y fiscales que usarán las publicaciones nuevas o editadas.</p></div></div><form id="settingsForm" class="settings-sections"><section><h3>Ventas y contacto</h3><div class="form-grid"><div class="field"><label>Porcentaje de seña</label><input name="deposit_percentage" type="number" min="1" max="100" value="${state.settings.deposit_percentage || 50}"></div><div class="field"><label>WhatsApp de ventas</label><input name="sales_whatsapp" value="${escapeHtml(state.settings.sales_whatsapp || "")}"></div><div class="field full"><label>Email de contacto</label><input name="contact_email" type="email" value="${escapeHtml(normalizedContactEmail(state.settings.contact_email))}"></div></div></section><section><h3>Calculadora de precios</h3><p>Valores iniciales para cada producto. No modifican automáticamente publicaciones ya existentes.</p><div class="form-grid"><div class="field"><label>IVA predeterminado</label><input name="vat_rate" type="number" min="0" max="100" step="0.01" value="${Number(state.settings.vat_rate ?? 21)}"></div><div class="field"><label>Costo de cobro estimado</label><input name="payment_fee_rate" type="number" min="0" max="99" step="0.01" value="${Number(state.settings.payment_fee_rate ?? 7)}"><small>No uses 28% si ese porcentaje ya incluye IVA; cargá sólo la tasa real de Mercado Pago.</small></div><div class="field"><label>Margen comercial adicional</label><input name="commercial_margin_rate" type="number" min="0" max="500" step="0.01" value="${Number(state.settings.commercial_margin_rate ?? 0)}"></div><div class="field"><label>Redondeo de precios</label><input name="pricing_rounding" type="number" min="0" step="0.01" value="${Number(state.settings.pricing_rounding ?? 100)}"></div></div></section><section><h3>Facturación asistida</h3><p>Completá estos datos únicamente después de confirmarlos con tu contador.</p><div class="form-grid"><div class="field"><label>Modo</label><select name="invoice_mode"><option value="assisted" ${state.settings.invoice_mode === "assisted" ? "selected" : ""}>Asistido desde ARCA</option><option value="automated" ${state.settings.invoice_mode === "automated" ? "selected" : ""}>Automatizado (requiere integración)</option><option value="disabled" ${state.settings.invoice_mode === "disabled" ? "selected" : ""}>Desactivado</option></select></div><div class="field"><label>Condición de Aceros Oeste</label><select name="issuer_tax_status"><option value="pending_accountant" ${state.settings.issuer_tax_status === "pending_accountant" ? "selected" : ""}>Pendiente de contador</option><option value="responsable_inscripto" ${state.settings.issuer_tax_status === "responsable_inscripto" ? "selected" : ""}>Responsable inscripto</option><option value="monotributista" ${state.settings.issuer_tax_status === "monotributista" ? "selected" : ""}>Monotributista</option><option value="exento" ${state.settings.issuer_tax_status === "exento" ? "selected" : ""}>Exento</option></select></div><div class="field"><label>CUIT emisor</label><input name="issuer_cuit" inputmode="numeric" value="${escapeHtml(state.settings.issuer_cuit || "")}" placeholder="Confirmar con contador"></div><div class="field"><label>Punto de venta</label><input name="invoice_point_of_sale" type="number" min="1" value="${escapeHtml(state.settings.invoice_point_of_sale || "")}" placeholder="Confirmar con contador"></div><div class="field"><label>Comprobante predeterminado</label><select name="default_invoice_type"><option value="">Definir con contador</option><option value="Factura A" ${state.settings.default_invoice_type === "Factura A" ? "selected" : ""}>Factura A</option><option value="Factura B" ${state.settings.default_invoice_type === "Factura B" ? "selected" : ""}>Factura B</option><option value="Factura C" ${state.settings.default_invoice_type === "Factura C" ? "selected" : ""}>Factura C</option></select></div></div></section><button class="btn cta" type="submit">Guardar configuración</button></form>`;
+  ws.innerHTML = `<div class="admin-page-head"><div><p class="eyebrow orange">AJUSTES</p><h1>Configuración de la tienda</h1><p>Valores comerciales y fiscales que usarán las publicaciones nuevas o editadas.</p></div></div><form id="settingsForm" class="settings-sections"><section><h3>Ventas y contacto</h3><div class="form-grid"><div class="field"><label>Porcentaje de seña</label><input name="deposit_percentage" type="number" min="1" max="100" value="${state.settings.deposit_percentage || 50}"></div><div class="field"><label>WhatsApp de ventas</label><input name="sales_whatsapp" value="${escapeHtml(state.settings.sales_whatsapp || "")}"></div><div class="field full"><label>Email de contacto</label><input name="contact_email" type="email" value="${escapeHtml(normalizedContactEmail(state.settings.contact_email))}"></div></div></section><section><h3>Calculadora de precios</h3><p>Definí valores iniciales para publicaciones nuevas. En cada producto ingresás un costo o valor neto de partida y la calculadora propone el precio final; las publicaciones existentes no cambian solas.</p><div class="form-grid"><div class="field"><label>IVA incluido en el precio final (%)</label><input name="vat_rate" type="number" min="0" max="100" step="0.01" value="${Number(state.settings.vat_rate ?? 21)}"><small>Usá la alícuota que confirme tu contador. El sistema la incorpora al precio publicado, no la suma después de la compra.</small></div><div class="field"><label>Costo de cobro estimado (%)</label><input name="payment_fee_rate" type="number" min="0" max="99" step="0.01" value="${Number(state.settings.payment_fee_rate ?? 7)}"><small>Es el porcentaje que Mercado Pago descuenta por procesar el cobro. Cargá la tasa real según tu plazo de acreditación; no IVA + comisión juntos.</small></div><div class="field"><label>Margen comercial adicional (%)</label><input name="commercial_margin_rate" type="number" min="0" max="500" step="0.01" value="${Number(state.settings.commercial_margin_rate ?? 0)}"><small>Es la ganancia o colchón que querés agregar sobre la base antes de impuestos y costo de cobro. En 0 no agrega margen.</small></div><div class="field"><label>Redondear hacia arriba cada</label><input name="pricing_rounding" type="number" min="0" step="0.01" value="${Number(state.settings.pricing_rounding ?? 100)}"><small>Ejemplo: con 100, un resultado de $130.108 se publica como $130.200.</small></div></div></section><section><h3>Facturación asistida</h3><p>Completá estos datos únicamente después de confirmarlos con tu contador.</p><div class="form-grid"><div class="field"><label>Modo</label><select name="invoice_mode"><option value="assisted" ${state.settings.invoice_mode === "assisted" ? "selected" : ""}>Asistido desde ARCA</option><option value="automated" ${state.settings.invoice_mode === "automated" ? "selected" : ""}>Automatizado (requiere integración)</option><option value="disabled" ${state.settings.invoice_mode === "disabled" ? "selected" : ""}>Desactivado</option></select></div><div class="field"><label>Condición de Aceros Oeste</label><select name="issuer_tax_status"><option value="pending_accountant" ${state.settings.issuer_tax_status === "pending_accountant" ? "selected" : ""}>Pendiente de contador</option><option value="responsable_inscripto" ${state.settings.issuer_tax_status === "responsable_inscripto" ? "selected" : ""}>Responsable inscripto</option><option value="monotributista" ${state.settings.issuer_tax_status === "monotributista" ? "selected" : ""}>Monotributista</option><option value="exento" ${state.settings.issuer_tax_status === "exento" ? "selected" : ""}>Exento</option></select></div><div class="field"><label>CUIT emisor</label><input name="issuer_cuit" inputmode="numeric" value="${escapeHtml(state.settings.issuer_cuit || "")}" placeholder="Confirmar con contador"></div><div class="field"><label>Punto de venta</label><input name="invoice_point_of_sale" type="number" min="1" value="${escapeHtml(state.settings.invoice_point_of_sale || "")}" placeholder="Confirmar con contador"></div><div class="field"><label>Comprobante predeterminado</label><select name="default_invoice_type"><option value="">Definir con contador</option><option value="Factura A" ${state.settings.default_invoice_type === "Factura A" ? "selected" : ""}>Factura A</option><option value="Factura B" ${state.settings.default_invoice_type === "Factura B" ? "selected" : ""}>Factura B</option><option value="Factura C" ${state.settings.default_invoice_type === "Factura C" ? "selected" : ""}>Factura C</option></select></div></div></section><button class="btn cta" type="submit">Guardar configuración</button></form>`;
   document.querySelector("#settingsForm").onsubmit = async (e) => {
     e.preventDefault();
     const button = e.submitter,
@@ -2710,6 +2744,8 @@ function openSettings() {
     values.payment_fee_rate = Number(values.payment_fee_rate);
     values.commercial_margin_rate = Number(values.commercial_margin_rate);
     values.pricing_rounding = Number(values.pricing_rounding);
+    values.sales_whatsapp = normalizedWhatsapp(values.sales_whatsapp);
+    values.freight_whatsapp = values.sales_whatsapp;
     values.invoice_point_of_sale = values.invoice_point_of_sale
       ? Number(values.invoice_point_of_sale)
       : null;
@@ -3422,10 +3458,12 @@ async function openEditProduct(id = null, similarId = null) {
     if (updateFinal || !Number(pricingInputs.final.value))
       pricingInputs.final.value = String(suggested);
     const final = Number(pricingInputs.final.value || suggested);
+    const baseWithMargin = base * (1 + commercialMarginRate / 100);
+    const marginAmount = baseWithMargin - base;
     const netBeforeVat = vatRate ? final / (1 + vatRate / 100) : final;
     const vatAmount = final - netBeforeVat;
     const feeAmount = final * (paymentFeeRate / 100);
-    document.querySelector("#pricingBreakdown").innerHTML = `<span><small>Precio sugerido</small><b>${money(suggested)}</b></span><span><small>Neto estimado en factura</small><b>${money(netBeforeVat)}</b></span><span><small>IVA incluido</small><b>${money(vatAmount)}</b></span><span><small>Costo de cobro estimado</small><b>${money(feeAmount)}</b></span><p>La comisión real depende del medio y plazo de acreditación. Confirmala en Mercado Pago y revisá este cálculo con tu contador.</p>`;
+    document.querySelector("#pricingBreakdown").innerHTML = `<span><small>Precio sugerido</small><b>${money(suggested)}</b></span><span><small>Base + margen</small><b>${money(baseWithMargin)}</b></span><span><small>IVA incluido</small><b>${money(vatAmount)}</b></span><span><small>Costo de cobro estimado</small><b>${money(feeAmount)}</b></span><p>Margen agregado sobre la base: <b>${money(marginAmount)}</b>. Para compensar la comisión, la fórmula divide por el porcentaje que realmente recibís. La tasa real depende del medio y plazo de acreditación; confirmala en Mercado Pago y revisá el tratamiento fiscal con tu contador.</p>`;
   };
   [
     pricingInputs.base,

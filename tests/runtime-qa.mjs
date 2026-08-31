@@ -80,6 +80,13 @@ const emailArchiveMigration = readFileSync(
   ),
   "utf8",
 );
+const termsContactsMigration = readFileSync(
+  new URL(
+    "supabase/migrations/020_terms_contacts_and_checkout.sql",
+    root,
+  ),
+  "utf8",
+);
 const withdrawalFunction = readFileSync(
   new URL("supabase/functions/create-withdrawal-request/index.ts", root),
   "utf8",
@@ -163,8 +170,8 @@ const rows = {
   store_settings: {
     id: 1,
     deposit_percentage: 50,
-    freight_whatsapp: "5491134322199",
-    sales_whatsapp: "5491134322199",
+    freight_whatsapp: "5491161781074",
+    sales_whatsapp: "5491161781074",
     contact_email: "gestionacerosoeste@gmail.com",
   },
   profiles: {
@@ -402,7 +409,7 @@ const executable = html
   .replace('<script src="assets/vendor/supabase.js?v=1"></script>', "")
   .replace('<script src="config.js"></script>', "")
   .replace(
-    '<script src="app.js?v=30"></script>',
+    '<script src="app.js?v=31"></script>',
     `<script>${app.replaceAll("</script>", "<\\/script>")}</script>`,
   );
 const errors = [];
@@ -472,7 +479,7 @@ assert(
   "Faltan íconos de medios de pago en el pie de página",
 );
 assert(
-  Boolean(d.querySelector('.whatsapp-float[href*="5491134322199"]')),
+  Boolean(d.querySelector('.whatsapp-float[href*="5491161781074"]')),
   "Falta el acceso flotante a WhatsApp",
 );
 assert(
@@ -1028,6 +1035,40 @@ assert(
   "La confirmación de compra no está aislada al email autenticado del comprador",
 );
 assert(
+  html.includes("11 6178 1074 / 11 6659 8695") &&
+    html.includes("https://wa.me/5491161781074") &&
+    !html.includes("11 3432 2199") &&
+    app.includes('const PRIMARY_WHATSAPP = "5491161781074"') &&
+    sharedEmailFunction.includes("https://wa.me/5491161781074"),
+  "Los teléfonos públicos no se actualizaron en toda la experiencia",
+);
+assert(
+  app.includes('id="acceptTerms"') &&
+    app.includes('name="termsVersion"') &&
+    app.includes("terms: {") &&
+    paymentFunction.includes('const TERMS_VERSION = "2026-08-31-v1"') &&
+    paymentFunction.includes("terms?.accepted !== true") &&
+    paymentFunction.includes("terms_accepted_at: new Date().toISOString()") &&
+    paymentFunction.includes("terms_version: TERMS_VERSION") &&
+    termsContactsMigration.includes("terms_accepted_at timestamptz") &&
+    termsContactsMigration.includes("terms_version text"),
+  "La aceptación trazable de términos no está completa",
+);
+assert(
+  paymentFunction.includes('success: `${site}/#inicio?checkout=exito`') &&
+    app.includes('route === "inicio"') &&
+    app.includes('new URLSearchParams(query).get("checkout")'),
+  "Mercado Pago no regresa al inicio conservando el estado del pago",
+);
+assert(
+  html.includes("El IVA aplicable ya forma parte del precio final publicado") &&
+    html.includes("no se agrega después de pagar") &&
+    app.includes("Margen agregado sobre la base") &&
+    app.includes("Para compensar la comisión") &&
+    !html.includes("si el cliente pide factura se le suma"),
+  "Los términos o la explicación de la calculadora son fiscalmente ambiguos",
+);
+assert(
   styles.includes(
     "#cuenta.signed-in .account-page-container{width:min(1480px,100%);max-width:none;margin:0 auto}",
   ),
@@ -1155,7 +1196,8 @@ assert(
 assert(
   !app.includes("El importe se vuelve a calcular de forma segura en el servidor") &&
     !app.includes("Modo asistido</b>") &&
-    app.includes("Necesito el comprobante con CUIT o razón social"),
+    app.includes("Quiero que el comprobante salga con CUIT o razón social") &&
+    app.includes("no modifica el total"),
   "El checkout o el panel todavía muestran textos técnicos innecesarios",
 );
 await authListener?.("SIGNED_OUT", null);
@@ -1176,6 +1218,14 @@ assert(
   Boolean(d.querySelector("#checkoutForm")),
   "El checkout no recupera una sesión persistida en incógnito",
 );
+assert(
+  Boolean(d.querySelector('#checkoutForm [name="acceptTerms"][required]')) &&
+    Boolean(d.querySelector('#checkoutForm a[href="#politicas"]')) &&
+    d.querySelector("#checkoutForm")?.textContent.includes(
+      "Todas las compras reciben comprobante",
+    ),
+  "El checkout no exige términos o todavía presenta la factura como opcional",
+);
 d.querySelector("#modal [data-close]")?.click();
 d.querySelector("[data-open-cart]")?.click();
 d.querySelectorAll("[data-remove]").forEach((button) => button.click());
@@ -1189,7 +1239,8 @@ dom.window.localStorage.setItem(
     items: [{ id: "11111111-1111-4111-8111-111111111111", qty: 1 }],
   }),
 );
-dom.window.location.hash = "#checkout/exito?collection_status=approved";
+dom.window.location.hash =
+  "#inicio?checkout=exito&collection_status=approved";
 await new Promise((resolve) => setTimeout(resolve, 120));
 assert(
   d.querySelector(".cart-count")?.textContent === "0" &&
@@ -1210,5 +1261,5 @@ if (errors.length) {
   process.exit(1);
 }
 console.log(
-  "QA OK v30: tienda, pagos, correo exclusivo al comprador, facturación y administración",
+  "QA OK v31: contactos, términos, precios, pagos, facturación y administración",
 );

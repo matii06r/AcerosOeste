@@ -1,6 +1,8 @@
 // @ts-ignore -- Las Edge Functions resuelven imports URL mediante Deno.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
+const TERMS_VERSION = "2026-08-31-v1";
+
 Deno.serve(async (req: Request) => {
   const configuredSite = Deno.env.get("SITE_URL") || "";
   const cors = {
@@ -11,13 +13,17 @@ Deno.serve(async (req: Request) => {
   };
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
   try {
-    const { items, paymentType = "full", customer } = await req.json();
+    const { items, paymentType = "full", customer, terms } = await req.json();
     if (!Array.isArray(items) || !items.length)
       throw new Error("El carrito está vacío");
     if (!["full", "deposit"].includes(paymentType))
       throw new Error("Tipo de pago inválido");
     if (!customer?.name || !customer?.phone)
       throw new Error("Faltan datos del comprador");
+    if (terms?.accepted !== true || terms?.version !== TERMS_VERSION)
+      throw new Error(
+        "Debés aceptar la versión vigente de los términos y condiciones",
+      );
     const billing = customer?.billing || {};
     const billingCondition = String(
       billing.condition || "consumer_final",
@@ -110,6 +116,8 @@ Deno.serve(async (req: Request) => {
           String(billing.documentNumber || "").replace(/[^0-9]/g, "") || null,
         billing_address: String(billing.address || "").trim() || null,
         billing_status: "pending",
+        terms_accepted_at: new Date().toISOString(),
+        terms_version: TERMS_VERSION,
       })
       .select()
       .single();
@@ -182,9 +190,9 @@ Deno.serve(async (req: Request) => {
         payer: { name: customer.name, email: accountEmail },
         external_reference: order.id,
         back_urls: {
-          success: `${site}/#checkout/exito`,
-          failure: `${site}/#checkout/error`,
-          pending: `${site}/#checkout/pendiente`,
+          success: `${site}/#inicio?checkout=exito`,
+          failure: `${site}/#inicio?checkout=error`,
+          pending: `${site}/#inicio?checkout=pendiente`,
         },
         auto_return: "approved",
         statement_descriptor: "ACEROS OESTE",
