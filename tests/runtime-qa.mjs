@@ -87,6 +87,10 @@ const termsContactsMigration = readFileSync(
   ),
   "utf8",
 );
+const multiMediaMigration = readFileSync(
+  new URL("supabase/migrations/021_product_multi_media.sql", root),
+  "utf8",
+);
 const withdrawalFunction = readFileSync(
   new URL("supabase/functions/create-withdrawal-request/index.ts", root),
   "utf8",
@@ -409,7 +413,7 @@ const executable = html
   .replace('<script src="assets/vendor/supabase.js?v=1"></script>', "")
   .replace('<script src="config.js"></script>', "")
   .replace(
-    '<script src="app.js?v=32"></script>',
+    '<script src="app.js?v=33"></script>',
     `<script>${app.replaceAll("</script>", "<\\/script>")}</script>`,
   );
 const errors = [];
@@ -428,6 +432,9 @@ const dom = new JSDOM(executable, {
     };
     window.supabase = { createClient: () => client };
     window.scrollTo = () => {};
+    window.URL.createObjectURL = (file) =>
+      `blob:test-${encodeURIComponent(file.name)}`;
+    window.URL.revokeObjectURL = () => {};
     window.open = (url) => {
       openedUrls.push(url);
       return null;
@@ -644,6 +651,21 @@ assert(
   "La galería no muestra fotos y videos",
 );
 assert(
+  d.querySelector(".product-description-section")?.textContent.includes(
+    "Mesa profesional",
+  ) &&
+    d.querySelector(".product-description-section")?.textContent.includes(
+      "A medida",
+    ) &&
+    !d.querySelector(".product-page-info")?.textContent.includes(
+      "Mesa profesional",
+    ) &&
+    d.querySelector(".product-description-section")?.nextElementSibling?.classList.contains(
+      "questions",
+    ),
+  "La descripción no aparece debajo de la publicación y antes de las preguntas",
+);
+assert(
   Boolean(d.querySelector("[data-delete-question]")),
   "El administrador no puede eliminar preguntas",
 );
@@ -673,8 +695,32 @@ await new Promise((resolve) => setTimeout(resolve, 40));
 assert(
   d.querySelector("#productPhotos")?.multiple &&
     d.querySelector("#productVideos")?.multiple &&
-    d.querySelectorAll("[data-wizard-step]").length === 4,
+    d.querySelectorAll("[data-wizard-step]").length === 4 &&
+    Boolean(d.querySelector("#productMediaCount")),
   "El editor no permite seleccionar varias fotos y videos",
+);
+const photoInput = d.querySelector("#productPhotos");
+const videoInput = d.querySelector("#productVideos");
+Object.defineProperty(photoInput, "files", {
+  configurable: true,
+  value: [new dom.window.File(["foto-1"], "foto-1.jpg", { type: "image/jpeg" })],
+});
+photoInput.dispatchEvent(new dom.window.Event("change"));
+Object.defineProperty(photoInput, "files", {
+  configurable: true,
+  value: [new dom.window.File(["foto-2"], "foto-2.webp", { type: "image/webp" })],
+});
+photoInput.dispatchEvent(new dom.window.Event("change"));
+Object.defineProperty(videoInput, "files", {
+  configurable: true,
+  value: [new dom.window.File(["video-1"], "video-1.mp4", { type: "video/mp4" })],
+});
+videoInput.dispatchEvent(new dom.window.Event("change"));
+assert(
+  d.querySelectorAll("#newMediaPreview .pending-media-item").length === 3 &&
+    d.querySelector("#productMediaCount")?.textContent.includes("3/10 fotos") &&
+    d.querySelector("#productMediaCount")?.textContent.includes("2 videos"),
+  "Las selecciones sucesivas de fotos y videos no se acumulan",
 );
 d.querySelector("#cancelProductEditor")?.click();
 dom.window.location.hash = "#cliente/client-1";
@@ -1074,6 +1120,23 @@ assert(
   "La política todavía muestra el bloque de comprobantes e IVA o la calculadora quedó ambigua",
 );
 assert(
+  !html.includes("TÉRMINOS DE COMPRA · VERSIÓN") &&
+    html.includes(">TÉRMINOS DE COMPRA</p>") &&
+    app.includes("const MAX_PRODUCT_PHOTOS = 10") &&
+    app.includes("let pendingPhotos = []") &&
+    app.includes("let pendingVideos = []") &&
+    app.includes('input.value = ""') &&
+    app.includes('videoInput.accept = "video/mp4,video/webm,video/quicktime,.mov"') &&
+    multiMediaMigration.includes("'video/quicktime'") &&
+    multiMediaMigration.includes("file_size_limit = 52428800") &&
+    app.includes('class="product-description-section"') &&
+    styles.includes(".product-image{height:auto;aspect-ratio:1/1") &&
+    styles.includes(".product-page-image img{width:100%;height:100%;padding:12px;object-fit:contain") &&
+    styles.includes(".gallery-thumbs{display:flex") &&
+    styles.includes(".product-description-section+.questions"),
+  "La carga multimedia, la imagen completa o la descripción ordenada quedó incompleta",
+);
+assert(
   styles.includes(
     "#cuenta.signed-in .account-page-container{width:min(1480px,100%);max-width:none;margin:0 auto}",
   ),
@@ -1266,5 +1329,5 @@ if (errors.length) {
   process.exit(1);
 }
 console.log(
-  "QA OK v32: políticas limpias, contactos, pagos, facturación y administración",
+  "QA OK v33: multimedia acumulativa, imágenes completas y descripción ordenada",
 );

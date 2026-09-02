@@ -1040,11 +1040,28 @@ function updateSessionNavigation() {
 }
 
 const isVideoUrl = (url) => /\.(mp4|webm|mov)(\?|$)/i.test(String(url));
+const MAX_PRODUCT_PHOTOS = 10;
+
+function productDescriptionMarkup(value) {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  return escapeHtml(text)
+    .split(/\n{2,}/)
+    .map(
+      (paragraph) =>
+        `<p>${paragraph
+          .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+          .replace(/\n/g, "<br>")}</p>`,
+    )
+    .join("");
+}
+
 function productVisual(product) {
-  const media = product.images?.[0];
+  const media =
+    product.images?.find((url) => !isVideoUrl(url)) || product.images?.[0];
   return media
     ? isVideoUrl(media)
-      ? `<video src="${escapeHtml(media)}" muted playsinline preload="metadata" aria-label="Video de ${escapeHtml(product.name)}"></video>`
+      ? `<video src="${escapeHtml(media)}" muted playsinline preload="none" aria-label="Video de ${escapeHtml(product.name)}"></video>`
       : `<img src="${escapeHtml(media)}" alt="${escapeHtml(product.name)}" loading="lazy">`
     : `<div class="shape ${product.category === "Campanas" ? "hood" : product.category.includes("Bacha") ? "sink" : "table"}"></div>`;
 }
@@ -1053,7 +1070,7 @@ function productGallery(product) {
   if (!media.length)
     return `<div class="product-page-image">${productVisual(product)}</div>`;
   const main = media[0];
-  return `<div class="product-gallery"><div id="galleryMain" class="product-page-image">${isVideoUrl(main) ? `<video src="${escapeHtml(main)}" controls playsinline></video>` : `<img src="${escapeHtml(main)}" alt="${escapeHtml(product.name)}">`}</div>${media.length > 1 ? `<div class="gallery-thumbs">${media.map((url, index) => `<button type="button" class="gallery-thumb ${index === 0 ? "active" : ""}" data-media="${escapeHtml(url)}" data-video="${isVideoUrl(url)}">${isVideoUrl(url) ? `<video src="${escapeHtml(url)}" muted preload="metadata"></video><span>▶</span>` : `<img src="${escapeHtml(url)}" alt="Vista ${index + 1}">`}</button>`).join("")}</div>` : ""}</div>`;
+  return `<div class="product-gallery"><div id="galleryMain" class="product-page-image">${isVideoUrl(main) ? `<video src="${escapeHtml(main)}" controls playsinline preload="metadata"></video>` : `<img src="${escapeHtml(main)}" alt="${escapeHtml(product.name)}">`}</div>${media.length > 1 ? `<div class="gallery-thumbs" aria-label="Galería del producto">${media.map((url, index) => `<button type="button" class="gallery-thumb ${index === 0 ? "active" : ""}" data-media="${escapeHtml(url)}" data-video="${isVideoUrl(url)}" aria-label="${isVideoUrl(url) ? `Reproducir video ${index + 1}` : `Ver foto ${index + 1}`}">${isVideoUrl(url) ? `<span class="gallery-video-thumb"><i>▶</i><small>Video ${index + 1}</small></span>` : `<img src="${escapeHtml(url)}" alt="Vista ${index + 1}" loading="lazy">`}</button>`).join("")}</div>` : ""}</div>`;
 }
 function renderCategories() {
   const list = state.categories;
@@ -1215,6 +1232,20 @@ async function showProductPage(slug) {
   const questions = await loadQuestions(product.id);
   page.querySelector("#productPageContent").innerHTML =
     `<div class="product-page-layout">${productGallery(product)}<div class="product-page-info"><p class="eyebrow orange">${escapeHtml(product.category)}</p><h1>${escapeHtml(product.name)}</h1><div class="price">${money(product.price)}</div><small class="final-price-note">Precio final al público · impuestos incluidos</small><div class="stock-line"><span class="badge ${product.stock < 3 ? "low" : ""}" style="position:static">${product.stock ? `${product.stock} unidades disponibles` : "Fabricación a pedido"}</span><small>SKU ${escapeHtml(product.sku)}</small></div><p>${escapeHtml(product.desc)}</p><div class="product-specs"><div><b>Material</b><br>Acero inoxidable</div><div><b>Fabricación</b><br>Nacional</div><div><b>Modalidad</b><br>${escapeHtml(saleTypeLabel(product.saleType))}</div><div><b>Entrega</b><br>A coordinar</div></div><p>${escapeHtml(product.details)}</p><div class="product-legal-note">${product.saleType === "standard" ? "Producto estándar sujeto a las condiciones de compra y al derecho de arrepentimiento cuando corresponda." : "Este producto puede fabricarse siguiendo medidas o especificaciones particulares. Las condiciones se informarán y aprobarán antes de iniciar la fabricación."}</div><div class="stack"><button class="btn cta" data-add="${product.id}" ${!product.stock ? "disabled" : ""}>Agregar al carrito</button><a class="btn secondary" target="_blank" rel="noopener" href="https://wa.me/${state.settings.sales_whatsapp || PRIMARY_WHATSAPP}?text=${encodeURIComponent("Hola Acerosoeste, quiero consultar por " + product.name)}">Consultar por WhatsApp</a>${isAdmin() && !String(product.id).startsWith("demo-") ? `<button class="btn outline" data-edit="${product.id}">Editar producto</button>` : ""}</div></div></div><div class="questions"><p class="eyebrow orange">PREGUNTAS</p><h2>Preguntá lo que necesitás saber</h2>${state.user ? `<form id="questionForm" class="question-form"><input name="question" maxlength="500" placeholder="Escribí tu pregunta sobre este producto..." required><button class="btn cta">Preguntar</button></form>` : '<div class="notice">Iniciá sesión para publicar una pregunta.</div>'}<div class="question-list">${renderQuestionList(questions)}</div></div>`;
+  const productInfo = page.querySelector(".product-page-info");
+  productInfo
+    ?.querySelectorAll(":scope > p:not(.eyebrow)")
+    .forEach((paragraph) => paragraph.remove());
+  const descriptionMarkup = [product.desc, product.details]
+    .map(productDescriptionMarkup)
+    .filter(Boolean)
+    .join("");
+  page
+    .querySelector(".questions")
+    ?.insertAdjacentHTML(
+      "beforebegin",
+      `<section class="product-description-section"><p class="eyebrow orange">DESCRIPCIÓN</p><h2>Descripción del producto</h2><div class="product-description-copy">${descriptionMarkup || "<p>Consultanos para conocer todos los detalles de este producto.</p>"}</div></section>`,
+    );
   document.querySelectorAll("[data-media]").forEach((button) => {
     button.onclick = () => {
       const url = button.dataset.media;
@@ -3476,32 +3507,108 @@ async function openEditProduct(id = null, similarId = null) {
   });
   pricingInputs.final.oninput = () => renderPricing();
   renderPricing();
-  const selectedMedia = () => [...photoInput.files, ...videoInput.files];
+  const mediaInputs = document.querySelector(".product-media-inputs");
+  mediaInputs?.insertAdjacentHTML(
+    "afterend",
+    '<div id="productMediaCount" class="product-media-count" aria-live="polite"></div>',
+  );
+  photoInput.closest("label").querySelector("small").textContent =
+    "Hasta 10 fotos · podés elegir varias juntas o volver a abrir el selector";
+  videoInput.closest("label").querySelector("small").textContent =
+    "Varios MP4, WebM o MOV · hasta 50 MB cada uno";
+  videoInput.accept = "video/mp4,video/webm,video/quicktime,.mov";
+  let pendingPhotos = [];
+  let pendingVideos = [];
+  let previewObjectUrls = [];
+  const fileIdentity = (file) =>
+    `${file.name}:${file.size}:${file.lastModified}:${file.type}`;
+  const uniqueFiles = (files) => [
+    ...new Map(files.map((file) => [fileIdentity(file), file])).values(),
+  ];
+  const activeExistingMedia = () => {
+    const removed = new Set(
+      [...document.querySelectorAll("[data-remove-media]:checked")].map(
+        (input) => input.value,
+      ),
+    );
+    return (product.images || []).filter((url) => !removed.has(url));
+  };
+  const selectedMedia = () => [...pendingPhotos, ...pendingVideos];
   const renderNewMediaPreview = () => {
     const files = selectedMedia();
-    const invalid = files.find((file) =>
-      file.type.startsWith("video/")
-        ? file.size > 50_000_000
-        : file.size > 5_000_000,
-    );
-    if (invalid) {
-      toast(`${invalid.name} supera el tamaño permitido.`, "error");
-      if (invalid.type.startsWith("video/")) videoInput.value = "";
-      else photoInput.value = "";
-      renderNewMediaPreview();
-      return;
-    }
+    previewObjectUrls.forEach((url) => URL.revokeObjectURL(url));
+    previewObjectUrls = [];
     document.querySelector("#newMediaPreview").innerHTML = files
-      .map((file) => {
+      .map((file, index) => {
         const url = URL.createObjectURL(file);
-        return file.type.startsWith("video/")
-          ? `<video src="${url}" muted controls></video>`
-          : `<img src="${url}" alt="Nueva foto">`;
+        previewObjectUrls.push(url);
+        return `<div class="media-admin-item pending-media-item">${file.type.startsWith("video/") ? `<video src="${url}" muted controls preload="metadata"></video>` : `<img src="${url}" alt="${escapeHtml(file.name)}">`}<span><b>${escapeHtml(file.name)}</b><button type="button" data-remove-pending-media="${index}">Quitar</button></span></div>`;
       })
       .join("");
+    const existing = activeExistingMedia();
+    const photoCount =
+      existing.filter((url) => !isVideoUrl(url)).length + pendingPhotos.length;
+    const videoCount =
+      existing.filter(isVideoUrl).length + pendingVideos.length;
+    document.querySelector("#productMediaCount").innerHTML =
+      `<b>${photoCount}/${MAX_PRODUCT_PHOTOS} fotos</b><span>${videoCount} video${videoCount === 1 ? "" : "s"}</span><small>La primera foto será la portada del producto.</small>`;
+    document
+      .querySelectorAll("[data-remove-pending-media]")
+      .forEach((button) => {
+        button.onclick = () => {
+          const index = Number(button.dataset.removePendingMedia);
+          if (index < pendingPhotos.length) pendingPhotos.splice(index, 1);
+          else pendingVideos.splice(index - pendingPhotos.length, 1);
+          renderNewMediaPreview();
+        };
+      });
   };
-  photoInput.onchange = renderNewMediaPreview;
-  videoInput.onchange = renderNewMediaPreview;
+  const addSelectedFiles = (kind, input) => {
+    const picked = [...input.files];
+    input.value = "";
+    const allowedTypes =
+      kind === "photo"
+        ? new Set(["image/jpeg", "image/png", "image/webp"])
+        : new Set(["video/mp4", "video/webm", "video/quicktime"]);
+    const maxSize = kind === "photo" ? 5_000_000 : 50_000_000;
+    const valid = picked.filter((file) => {
+      const extensionAllowed =
+        kind === "photo"
+          ? /\.(jpe?g|png|webp)$/i.test(file.name)
+          : /\.(mp4|webm|mov)$/i.test(file.name);
+      if (!allowedTypes.has(file.type) && !extensionAllowed) {
+        toast(`${file.name} tiene un formato no permitido.`, "error");
+        return false;
+      }
+      if (file.size > maxSize) {
+        toast(`${file.name} supera el tamaño permitido.`, "error");
+        return false;
+      }
+      return true;
+    });
+    if (kind === "photo") {
+      const existingPhotos = activeExistingMedia().filter(
+        (url) => !isVideoUrl(url),
+      ).length;
+      const available = Math.max(
+        0,
+        MAX_PRODUCT_PHOTOS - existingPhotos - pendingPhotos.length,
+      );
+      const accepted = valid.slice(0, available);
+      pendingPhotos = uniqueFiles([...pendingPhotos, ...accepted]);
+      if (valid.length > accepted.length)
+        toast(`Podés publicar hasta ${MAX_PRODUCT_PHOTOS} fotos por producto.`, "error");
+    } else {
+      pendingVideos = uniqueFiles([...pendingVideos, ...valid]);
+    }
+    renderNewMediaPreview();
+  };
+  photoInput.onchange = () => addSelectedFiles("photo", photoInput);
+  videoInput.onchange = () => addSelectedFiles("video", videoInput);
+  document.querySelectorAll("[data-remove-media]").forEach((input) => {
+    input.onchange = renderNewMediaPreview;
+  });
+  renderNewMediaPreview();
   let currentStep = 1;
   const showStep = (step) => {
     currentStep = Math.max(1, Math.min(4, step));
@@ -3540,18 +3647,27 @@ async function openEditProduct(id = null, similarId = null) {
   document.querySelector("#productForm").onsubmit = (e) =>
     saveProduct(e, product, selectedMedia());
 }
-async function uploadProductMedia(files) {
+async function uploadProductMedia(files, onProgress = () => {}) {
   const urls = [];
-  for (const file of files) {
-    const extension = (file.name.split(".").pop() || "jpg").toLowerCase();
-    const path = `${crypto.randomUUID()}.${extension}`;
-    const { error } = await supabase.storage
-      .from("product-images")
-      .upload(path, file, { cacheControl: "3600", upsert: false });
-    if (error) throw error;
-    urls.push(
-      supabase.storage.from("product-images").getPublicUrl(path).data.publicUrl,
-    );
+  const uploadedPaths = [];
+  try {
+    for (const [index, file] of files.entries()) {
+      onProgress(index + 1, files.length, file);
+      const extension = (file.name.split(".").pop() || "jpg").toLowerCase();
+      const path = `${crypto.randomUUID()}.${extension}`;
+      const { error } = await supabase.storage
+        .from("product-images")
+        .upload(path, file, { cacheControl: "3600", upsert: false });
+      if (error) throw error;
+      uploadedPaths.push(path);
+      urls.push(
+        supabase.storage.from("product-images").getPublicUrl(path).data.publicUrl,
+      );
+    }
+  } catch (error) {
+    if (uploadedPaths.length)
+      await supabase.storage.from("product-images").remove(uploadedPaths);
+    throw error;
   }
   return urls;
 }
@@ -3587,7 +3703,10 @@ async function saveProduct(event, current, files) {
       ),
     );
     const kept = (current.images || []).filter((url) => !removed.has(url));
-    const uploaded = await uploadProductMedia(files);
+    const uploaded = await uploadProductMedia(files, (currentIndex, total) => {
+      if (button && total)
+        button.textContent = `Subiendo archivo ${currentIndex} de ${total}…`;
+    });
     values.images = [...kept, ...uploaded];
     const query = current.id
       ? supabase.from("products").update(values).eq("id", current.id)
