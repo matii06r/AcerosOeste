@@ -1,7 +1,11 @@
 // @ts-ignore -- Las Edge Functions resuelven imports URL mediante Deno.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const TERMS_VERSION = "2026-08-31-v1";
+const TERMS_VERSION = "2026-08-31-v2";
+const ACCEPTED_TERMS_VERSIONS = new Set([
+  "2026-08-31-v1",
+  TERMS_VERSION,
+]);
 
 Deno.serve(async (req: Request) => {
   const configuredSite = Deno.env.get("SITE_URL") || "";
@@ -20,7 +24,10 @@ Deno.serve(async (req: Request) => {
       throw new Error("Tipo de pago inválido");
     if (!customer?.name || !customer?.phone)
       throw new Error("Faltan datos del comprador");
-    if (terms?.accepted !== true || terms?.version !== TERMS_VERSION)
+    if (
+      terms?.accepted !== true ||
+      !ACCEPTED_TERMS_VERSIONS.has(String(terms?.version || ""))
+    )
       throw new Error(
         "Debés aceptar la versión vigente de los términos y condiciones",
       );
@@ -117,7 +124,7 @@ Deno.serve(async (req: Request) => {
         billing_address: String(billing.address || "").trim() || null,
         billing_status: "pending",
         terms_accepted_at: new Date().toISOString(),
-        terms_version: TERMS_VERSION,
+        terms_version: String(terms.version),
       })
       .select()
       .single();

@@ -409,7 +409,7 @@ const executable = html
   .replace('<script src="assets/vendor/supabase.js?v=1"></script>', "")
   .replace('<script src="config.js"></script>', "")
   .replace(
-    '<script src="app.js?v=31"></script>',
+    '<script src="app.js?v=32"></script>',
     `<script>${app.replaceAll("</script>", "<\\/script>")}</script>`,
   );
 const errors = [];
@@ -1046,10 +1046,13 @@ assert(
   app.includes('id="acceptTerms"') &&
     app.includes('name="termsVersion"') &&
     app.includes("terms: {") &&
-    paymentFunction.includes('const TERMS_VERSION = "2026-08-31-v1"') &&
+    app.includes('const TERMS_VERSION = "2026-08-31-v2"') &&
+    paymentFunction.includes('const TERMS_VERSION = "2026-08-31-v2"') &&
+    paymentFunction.includes('"2026-08-31-v1"') &&
+    paymentFunction.includes("ACCEPTED_TERMS_VERSIONS.has") &&
     paymentFunction.includes("terms?.accepted !== true") &&
     paymentFunction.includes("terms_accepted_at: new Date().toISOString()") &&
-    paymentFunction.includes("terms_version: TERMS_VERSION") &&
+    paymentFunction.includes("terms_version: String(terms.version)") &&
     termsContactsMigration.includes("terms_accepted_at timestamptz") &&
     termsContactsMigration.includes("terms_version text"),
   "La aceptación trazable de términos no está completa",
@@ -1061,12 +1064,14 @@ assert(
   "Mercado Pago no regresa al inicio conservando el estado del pago",
 );
 assert(
-  html.includes("El IVA aplicable ya forma parte del precio final publicado") &&
-    html.includes("no se agrega después de pagar") &&
+  !html.includes("Comprobantes e IVA") &&
+    !html.includes("El IVA aplicable") &&
+    !html.includes("los comprobantes y el número de pedido") &&
+    !app.includes("modificaciones, comprobantes, entrega") &&
     app.includes("Margen agregado sobre la base") &&
     app.includes("Para compensar la comisión") &&
     !html.includes("si el cliente pide factura se le suma"),
-  "Los términos o la explicación de la calculadora son fiscalmente ambiguos",
+  "La política todavía muestra el bloque de comprobantes e IVA o la calculadora quedó ambigua",
 );
 assert(
   styles.includes(
@@ -1261,5 +1266,5 @@ if (errors.length) {
   process.exit(1);
 }
 console.log(
-  "QA OK v31: contactos, términos, precios, pagos, facturación y administración",
+  "QA OK v32: políticas limpias, contactos, pagos, facturación y administración",
 );
