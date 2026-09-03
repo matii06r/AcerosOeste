@@ -413,7 +413,7 @@ const executable = html
   .replace('<script src="assets/vendor/supabase.js?v=1"></script>', "")
   .replace('<script src="config.js"></script>', "")
   .replace(
-    '<script src="app.js?v=35"></script>',
+    '<script src="app.js?v=36"></script>',
     `<script>${app.replaceAll("</script>", "<\\/script>")}</script>`,
   );
 const errors = [];
@@ -465,7 +465,21 @@ assert(
     d.querySelectorAll("[data-category-carousel]").length === 2,
   "El carrusel de categorías no muestra sus flechas laterales",
 );
+assert(
+  d.querySelectorAll("#categoryCards .category-card").length === 1 &&
+    Boolean(d.querySelector("#categoryCards .category-card-cover")),
+  "La categoría principal no utiliza la foto de uno de sus productos",
+);
 const mainProduct = rows.products[0];
+const mainCategory = rows.categories[0];
+for (let index = 2; index <= 7; index += 1)
+  rows.categories.push({
+    ...mainCategory,
+    id: `category-${index}`,
+    name: `Categoría de prueba ${index}`,
+    slug: `categoria-prueba-${index}`,
+    sort_order: index * 10,
+  });
 for (let index = 2; index <= 30; index += 1)
   rows.products.push({
     ...mainProduct,
@@ -480,8 +494,10 @@ await new Promise((resolve) => setTimeout(resolve, 380));
 assert(
   d.querySelectorAll("#productGrid .product-card").length === 20 &&
     d.querySelectorAll("#catalogProductGrid .product-card").length === 24 &&
-    !d.querySelector("#catalogLoadMoreProducts")?.classList.contains("hidden"),
-  "La portada no limita a 20 o el catálogo no pagina un inventario grande",
+    !d.querySelector("#catalogLoadMoreProducts")?.classList.contains("hidden") &&
+    d.querySelectorAll("#categoryCards .category-card").length === 5 &&
+    d.querySelectorAll("#categoryFilters .chip").length === 8,
+  "La portada no limita productos y categorías o el catálogo no pagina un inventario grande",
 );
 d.querySelector("#catalogLoadMoreProducts")?.click();
 await new Promise((resolve) => setTimeout(resolve, 25));
@@ -490,6 +506,7 @@ assert(
   "El catálogo completo no permite continuar cargando productos",
 );
 rows.products.splice(1);
+rows.categories.splice(1);
 emitRealtime("products", { eventType: "DELETE", old: { id: "productos-de-prueba" } });
 await new Promise((resolve) => setTimeout(resolve, 380));
 dom.window.location.hash = "#catalogo";
@@ -1211,6 +1228,16 @@ assert(
   "El catálogo profesional, su límite, las tarjetas alineadas o el fade-in quedaron incompletos",
 );
 assert(
+  app.includes("const HOME_CATEGORY_LIMIT = 5") &&
+    app.includes("list.slice(0, HOME_CATEGORY_LIMIT)") &&
+    app.includes("function categoryCover") &&
+    app.includes('class="category-card-cover"') &&
+    styles.includes(".category-grid{grid-template-columns:repeat(5,minmax(0,1fr))") &&
+    styles.includes(".category-photo-card:hover .category-card-cover") &&
+    styles.includes(".category-photo-card.has-fallback"),
+  "Las cinco categorías principales o sus portadas fotográficas quedaron incompletas",
+);
+assert(
   styles.includes(
     "#cuenta.signed-in .account-page-container{width:min(1480px,100%);max-width:none;margin:0 auto}",
   ),
@@ -1403,5 +1430,5 @@ if (errors.length) {
   process.exit(1);
 }
 console.log(
-  "QA OK v35: categorías con flechas, 20 destacados, catálogo completo y tarjetas alineadas",
+  "QA OK v36: cinco categorías con fotos y acceso al catálogo completo",
 );

@@ -10,6 +10,7 @@ const TERMS_VERSION = "2026-08-31-v2";
 const PRIMARY_WHATSAPP = "5491161781074";
 const HOME_PRODUCT_LIMIT = 20;
 const CATALOG_PAGE_SIZE = 24;
+const HOME_CATEGORY_LIMIT = 5;
 const hasSupabaseConfig = Boolean(
   window.ACEROS_CONFIG?.SUPABASE_URL &&
     window.ACEROS_CONFIG?.SUPABASE_PUBLISHABLE_KEY,
@@ -1079,6 +1080,15 @@ function productCardVisual(product) {
 function productCardMarkup(product, index = 0) {
   return `<article class="product-card reveal-on-scroll" style="--reveal-delay:${Math.min(index % 4, 3) * 80}ms"><a href="#producto/${encodeURIComponent(product.slug)}" class="product-image"><span class="badge ${product.stock < 3 ? "low" : ""}">${product.stock ? `${product.stock} en stock` : "A pedido"}</span>${productCardVisual(product)}</a><div class="product-info"><small>${escapeHtml(product.category)}</small><h3><a href="#producto/${encodeURIComponent(product.slug)}">${escapeHtml(product.name)}</a></h3><div class="price">${money(product.price)} <small>final</small></div><div class="product-actions"><a class="btn outline" href="#producto/${encodeURIComponent(product.slug)}">Ver producto</a><button class="btn cta" data-add="${product.id}" ${!product.stock ? "disabled" : ""}>Agregar</button></div>${isAdmin() && !String(product.id).startsWith("demo-") ? `<div class="admin-actions"><button class="btn secondary" data-edit="${product.id}">Editar</button><button class="btn danger" data-delete="${product.id}">Eliminar</button></div>` : ""}</div></article>`;
 }
+function categoryCover(categoryName) {
+  const product = state.products.find(
+    (item) =>
+      item.active !== false &&
+      item.category === categoryName &&
+      item.images?.some((url) => !isVideoUrl(url)),
+  );
+  return product?.images?.find((url) => !isVideoUrl(url)) || "";
+}
 function productGallery(product) {
   const media = product.images || [];
   if (!media.length)
@@ -1088,12 +1098,13 @@ function productGallery(product) {
 }
 function renderCategories() {
   const list = state.categories;
+  const homeCategories = list.slice(0, HOME_CATEGORY_LIMIT);
   document.querySelector("#categoryCards").innerHTML =
-    list
-      .map(
-        (c) =>
-          `<article class="category-card" data-cat="${escapeHtml(c.name)}"><span>${categoryVisuals[c.name] || "▱"}</span><h3>${escapeHtml(c.name)}</h3><small>Ver productos →</small></article>`,
-      )
+    homeCategories
+      .map((category) => {
+        const cover = categoryCover(category.name);
+        return `<a class="category-card category-photo-card ${cover ? "has-cover" : "has-fallback"}" href="#catalogo" data-cat="${escapeHtml(category.name)}">${cover ? `<img class="category-card-cover" src="${escapeHtml(cover)}" alt="" loading="lazy">` : ""}<span class="category-card-shade" aria-hidden="true"></span><span class="category-card-content"><i class="category-card-icon" aria-hidden="true">${categoryVisuals[category.name] || "▱"}</i><b>${escapeHtml(category.name)}</b><small>Ver productos →</small></span></a>`;
+      })
       .join("") ||
     '<div class="empty">Las categorías se están preparando.</div>';
   document.querySelectorAll("[data-cat]").forEach(
