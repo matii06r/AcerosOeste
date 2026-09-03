@@ -413,7 +413,7 @@ const executable = html
   .replace('<script src="assets/vendor/supabase.js?v=1"></script>', "")
   .replace('<script src="config.js"></script>', "")
   .replace(
-    '<script src="app.js?v=34"></script>',
+    '<script src="app.js?v=35"></script>',
     `<script>${app.replaceAll("</script>", "<\\/script>")}</script>`,
   );
 const errors = [];
@@ -456,9 +456,51 @@ assert(
   "El contador conserva productos inexistentes después de recargar",
 );
 assert(
-  d.querySelectorAll(".product-card").length === 1,
+  d.querySelectorAll("#productGrid .product-card").length === 1 &&
+    d.querySelectorAll("#catalogProductGrid .product-card").length === 1,
   "El catálogo remoto no se renderizó",
 );
+assert(
+  d.querySelectorAll(".category-arrow").length === 4 &&
+    d.querySelectorAll("[data-category-carousel]").length === 2,
+  "El carrusel de categorías no muestra sus flechas laterales",
+);
+const mainProduct = rows.products[0];
+for (let index = 2; index <= 30; index += 1)
+  rows.products.push({
+    ...mainProduct,
+    id: `22222222-2222-4222-8222-${String(index).padStart(12, "0")}`,
+    name: `Producto de prueba ${index}`,
+    slug: `producto-prueba-${index}`,
+    sku: `TEST-${index}`,
+    created_at: `2026-01-${String(Math.min(index, 28)).padStart(2, "0")}`,
+  });
+emitRealtime("products", { eventType: "INSERT", new: rows.products.at(-1) });
+await new Promise((resolve) => setTimeout(resolve, 380));
+assert(
+  d.querySelectorAll("#productGrid .product-card").length === 20 &&
+    d.querySelectorAll("#catalogProductGrid .product-card").length === 24 &&
+    !d.querySelector("#catalogLoadMoreProducts")?.classList.contains("hidden"),
+  "La portada no limita a 20 o el catálogo no pagina un inventario grande",
+);
+d.querySelector("#catalogLoadMoreProducts")?.click();
+await new Promise((resolve) => setTimeout(resolve, 25));
+assert(
+  d.querySelectorAll("#catalogProductGrid .product-card").length === 30,
+  "El catálogo completo no permite continuar cargando productos",
+);
+rows.products.splice(1);
+emitRealtime("products", { eventType: "DELETE", old: { id: "productos-de-prueba" } });
+await new Promise((resolve) => setTimeout(resolve, 380));
+dom.window.location.hash = "#catalogo";
+await new Promise((resolve) => setTimeout(resolve, 25));
+assert(
+  !d.querySelector("#catalogo")?.classList.contains("hidden") &&
+    d.querySelector("#inicio")?.classList.contains("hidden"),
+  "La página independiente del catálogo no abre correctamente",
+);
+dom.window.location.hash = "#inicio";
+await new Promise((resolve) => setTimeout(resolve, 25));
 assert(
   d.querySelector(".product-image")?.getAttribute("href") ===
     "#producto/mesa-inox",
@@ -1152,6 +1194,23 @@ assert(
   "La carga multimedia, la imagen completa o la descripción ordenada quedó incompleta",
 );
 assert(
+  app.includes("const HOME_PRODUCT_LIMIT = 20") &&
+    app.includes("const CATALOG_PAGE_SIZE = 24") &&
+    app.includes("list.slice(0, HOME_PRODUCT_LIMIT)") &&
+    app.includes('route === "catalogo"') &&
+    app.includes("function bindCategoryCarousel") &&
+    app.includes("function refreshRevealAnimations") &&
+    html.includes('id="catalogProductGrid"') &&
+    html.includes('id="catalogCategoryFilters"') &&
+    styles.includes(".chips::-webkit-scrollbar{display:none}") &&
+    styles.includes(".product-grid{grid-template-columns:repeat(4,minmax(0,1fr))") &&
+    styles.includes(".product-image>img.product-card-main") &&
+    styles.includes(".product-info>.price{margin-top:auto}") &&
+    styles.includes("transition:opacity 1.05s") &&
+    styles.includes("@media(prefers-reduced-motion:reduce)"),
+  "El catálogo profesional, su límite, las tarjetas alineadas o el fade-in quedaron incompletos",
+);
+assert(
   styles.includes(
     "#cuenta.signed-in .account-page-container{width:min(1480px,100%);max-width:none;margin:0 auto}",
   ),
@@ -1344,5 +1403,5 @@ if (errors.length) {
   process.exit(1);
 }
 console.log(
-  "QA OK v34: imágenes sin marcos, galería adaptable y botones alineados",
+  "QA OK v35: categorías con flechas, 20 destacados, catálogo completo y tarjetas alineadas",
 );

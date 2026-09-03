@@ -8,6 +8,8 @@ const ADMIN_CONTACT_EMAIL = "gestionacerosoestee@gmail.com";
 const LEGACY_ADMIN_EMAIL = "gestionacerosoeste@gmail.com";
 const TERMS_VERSION = "2026-08-31-v2";
 const PRIMARY_WHATSAPP = "5491161781074";
+const HOME_PRODUCT_LIMIT = 20;
+const CATALOG_PAGE_SIZE = 24;
 const hasSupabaseConfig = Boolean(
   window.ACEROS_CONFIG?.SUPABASE_URL &&
     window.ACEROS_CONFIG?.SUPABASE_PUBLISHABLE_KEY,
@@ -124,7 +126,7 @@ const state = {
   profile: null,
   filter: "Todos",
   search: "",
-  visibleCount: 24,
+  visibleCount: CATALOG_PAGE_SIZE,
   loading: true,
   usingFallback: false,
   chatChannel: null,
@@ -139,6 +141,7 @@ const state = {
   notifications: [],
 };
 const realtimeTimers = new Map();
+let revealObserver = null;
 const isAdmin = () => state.profile?.role === "admin";
 const normalizedContactEmail = (value) => {
   const email = String(value || "").trim();
@@ -1065,6 +1068,17 @@ function productVisual(product) {
       : `<img src="${escapeHtml(media)}" alt="${escapeHtml(product.name)}" loading="lazy">`
     : `<div class="shape ${product.category === "Campanas" ? "hood" : product.category.includes("Bacha") ? "sink" : "table"}"></div>`;
 }
+function productCardVisual(product) {
+  const media =
+    product.images?.find((url) => !isVideoUrl(url)) || product.images?.[0];
+  if (!media) return productVisual(product);
+  if (isVideoUrl(media))
+    return `<video class="product-card-main" src="${escapeHtml(media)}" muted playsinline preload="metadata" aria-label="Video de ${escapeHtml(product.name)}"></video>`;
+  return `<span class="product-image-backdrop" aria-hidden="true"><img src="${escapeHtml(media)}" alt="" loading="lazy"></span><img class="product-card-main" src="${escapeHtml(media)}" alt="${escapeHtml(product.name)}" loading="lazy">`;
+}
+function productCardMarkup(product, index = 0) {
+  return `<article class="product-card reveal-on-scroll" style="--reveal-delay:${Math.min(index % 4, 3) * 80}ms"><a href="#producto/${encodeURIComponent(product.slug)}" class="product-image"><span class="badge ${product.stock < 3 ? "low" : ""}">${product.stock ? `${product.stock} en stock` : "A pedido"}</span>${productCardVisual(product)}</a><div class="product-info"><small>${escapeHtml(product.category)}</small><h3><a href="#producto/${encodeURIComponent(product.slug)}">${escapeHtml(product.name)}</a></h3><div class="price">${money(product.price)} <small>final</small></div><div class="product-actions"><a class="btn outline" href="#producto/${encodeURIComponent(product.slug)}">Ver producto</a><button class="btn cta" data-add="${product.id}" ${!product.stock ? "disabled" : ""}>Agregar</button></div>${isAdmin() && !String(product.id).startsWith("demo-") ? `<div class="admin-actions"><button class="btn secondary" data-edit="${product.id}">Editar</button><button class="btn danger" data-delete="${product.id}">Eliminar</button></div>` : ""}</div></article>`;
+}
 function productGallery(product) {
   const media = product.images || [];
   if (!media.length)
@@ -1086,29 +1100,25 @@ function renderCategories() {
     (node) =>
       (node.onclick = () => {
         state.filter = node.dataset.cat;
-        state.visibleCount = 24;
-        location.hash = "productos";
+        state.visibleCount = CATALOG_PAGE_SIZE;
+        location.hash = "catalogo";
         renderProducts();
-        requestAnimationFrame(() =>
-          document
-            .querySelector("#productos")
-            ?.scrollIntoView({ behavior: "smooth" }),
-        );
       }),
   );
   document.querySelector("#footerCategories").innerHTML = list
     .map(
       (category) =>
-        `<a href="#productos" data-footer-cat="${escapeHtml(category.name)}">${escapeHtml(category.name)}</a>`,
+        `<a href="#catalogo" data-footer-cat="${escapeHtml(category.name)}">${escapeHtml(category.name)}</a>`,
     )
     .join("");
   document.querySelectorAll("[data-footer-cat]").forEach((link) => {
     link.onclick = () => {
       state.filter = link.dataset.footerCat;
-      state.visibleCount = 24;
+      state.visibleCount = CATALOG_PAGE_SIZE;
       renderProducts();
     };
   });
+  refreshRevealAnimations(document.querySelector("#categoryCards"));
 }
 function renderClients() {
   const grid = document.querySelector("#clientsGrid");
@@ -1145,19 +1155,67 @@ function renderFilters() {
     ...new Set(state.categories.map((c) => c.name)),
     ...new Set(state.products.map((p) => p.category)),
   ];
-  document.querySelector("#categoryFilters").innerHTML = [...new Set(names)]
+  const markup = [...new Set(names)]
     .map(
       (name) =>
-        `<button class="chip ${state.filter === name ? "active" : ""}" data-filter="${escapeHtml(name)}">${escapeHtml(name)}</button>`,
+        `<button class="chip ${state.filter === name ? "active" : ""}" type="button" data-filter="${escapeHtml(name)}">${escapeHtml(name)}</button>`,
     )
     .join("");
+  ["categoryFilters", "catalogCategoryFilters"].forEach((id) => {
+    const filters = document.querySelector(`#${id}`);
+    if (!filters) return;
+    filters.innerHTML = markup;
+    bindCategoryCarousel(id);
+  });
+  document.querySelectorAll("#searchInput, #catalogSearchInput").forEach((input) => {
+    if (input.value !== state.search) input.value = state.search;
+  });
   document.querySelectorAll("[data-filter]").forEach(
     (node) =>
       (node.onclick = () => {
         state.filter = node.dataset.filter;
-        state.visibleCount = 24;
+        state.visibleCount = CATALOG_PAGE_SIZE;
         renderProducts();
       }),
+  );
+}
+function bindCategoryCarousel(id) {
+  const scroller = document.querySelector(`#${id}`);
+  const carousel = document.querySelector(`[data-category-carousel="${id}"]`);
+  if (!scroller || !carousel) return;
+  const arrows = [...carousel.querySelectorAll("[data-category-move]")];
+  const updateArrows = () => {
+    const atStart = scroller.scrollLeft <= 2;
+    const atEnd =
+      scroller.scrollWidth <= scroller.clientWidth + 2 ||
+      scroller.scrollLeft + scroller.clientWidth >= scroller.scrollWidth - 2;
+    arrows.forEach((arrow) => {
+      arrow.disabled = Number(arrow.dataset.categoryMove) < 0 ? atStart : atEnd;
+    });
+  };
+  arrows.forEach((arrow) => {
+    arrow.onclick = () => {
+      const distance = Math.max(220, Math.round(scroller.clientWidth * 0.72));
+      const left = distance * Number(arrow.dataset.categoryMove);
+      if (typeof scroller.scrollBy === "function")
+        scroller.scrollBy({ left, behavior: "smooth" });
+      else scroller.scrollLeft += left;
+      window.setTimeout(updateArrows, 350);
+    };
+  });
+  scroller.onscroll = updateArrows;
+  requestAnimationFrame(() => {
+    updateArrows();
+    const active = scroller.querySelector(".chip.active");
+    if (typeof active?.scrollIntoView === "function")
+      active.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "center" });
+  });
+}
+function filteredProducts() {
+  return state.products.filter(
+    (product) =>
+      (state.filter === "Todos" || product.category === state.filter) &&
+      product.name.toLowerCase().includes(state.search.toLowerCase()),
   );
 }
 function renderProducts() {
@@ -1165,30 +1223,50 @@ function renderProducts() {
   const grid = document.querySelector("#productGrid");
   if (state.loading) {
     grid.innerHTML = '<div class="empty">Cargando catálogo…</div>';
+    renderCatalogProducts();
     return;
   }
-  const list = state.products.filter(
-    (p) =>
-      (state.filter === "Todos" || p.category === state.filter) &&
-      p.name.toLowerCase().includes(state.search.toLowerCase()),
-  );
+  const list = filteredProducts();
   document
     .querySelector("#emptyState")
     .classList.toggle("hidden", Boolean(list.length));
-  const visible = list.slice(0, state.visibleCount);
+  const visible = list.slice(0, HOME_PRODUCT_LIMIT);
   grid.innerHTML = visible
-    .map(
-      (p) =>
-        `<article class="product-card"><a href="#producto/${encodeURIComponent(p.slug)}" class="product-image"><span class="badge ${p.stock < 3 ? "low" : ""}">${p.stock ? `${p.stock} en stock` : "A pedido"}</span>${productVisual(p)}</a><div class="product-info"><small>${escapeHtml(p.category)}</small><h3><a href="#producto/${encodeURIComponent(p.slug)}">${escapeHtml(p.name)}</a></h3><div class="price">${money(p.price)} <small>final</small></div><div class="product-actions"><a class="btn outline" href="#producto/${encodeURIComponent(p.slug)}">Ver producto</a><button class="btn cta" data-add="${p.id}" ${!p.stock ? "disabled" : ""}>Agregar</button></div>${isAdmin() && !String(p.id).startsWith("demo-") ? `<div class="admin-actions"><button class="btn secondary" data-edit="${p.id}">Editar</button><button class="btn danger" data-delete="${p.id}">Eliminar</button></div>` : ""}</div></article>`,
-    )
+    .map(productCardMarkup)
     .join("");
-  const loadMore = document.querySelector("#loadMoreProducts");
-  loadMore.classList.toggle("hidden", visible.length >= list.length);
-  loadMore.onclick = () => {
-    state.visibleCount += 24;
-    renderProducts();
-  };
+  renderCatalogProducts();
   bindProductActions();
+  refreshRevealAnimations(grid);
+}
+function renderCatalogProducts() {
+  const grid = document.querySelector("#catalogProductGrid");
+  if (!grid) return;
+  const empty = document.querySelector("#catalogEmptyState");
+  const count = document.querySelector("#catalogCount");
+  const loadMore = document.querySelector("#catalogLoadMoreProducts");
+  if (state.loading) {
+    grid.innerHTML = '<div class="empty">Cargando catálogo…</div>';
+    empty?.classList.add("hidden");
+    loadMore?.classList.add("hidden");
+    if (count) count.textContent = "Cargando…";
+    return;
+  }
+  const list = filteredProducts();
+  const visible = list.slice(0, state.visibleCount);
+  grid.innerHTML = visible.map(productCardMarkup).join("");
+  empty?.classList.toggle("hidden", Boolean(list.length));
+  if (count)
+    count.textContent = `${list.length} ${list.length === 1 ? "producto" : "productos"}`;
+  loadMore?.classList.toggle("hidden", visible.length >= list.length);
+  if (loadMore)
+    loadMore.onclick = () => {
+      state.visibleCount += CATALOG_PAGE_SIZE;
+      renderCatalogProducts();
+      bindProductActions();
+      refreshRevealAnimations(grid);
+    };
+  bindProductActions();
+  refreshRevealAnimations(grid);
 }
 function bindProductActions() {
   document
@@ -1200,6 +1278,48 @@ function bindProductActions() {
   document
     .querySelectorAll("[data-delete]")
     .forEach((n) => (n.onclick = () => deleteProduct(n.dataset.delete)));
+}
+function refreshRevealAnimations(root = document) {
+  if (!root) return;
+  const selectors = [
+    ".hero-content",
+    ".trust-grid>div",
+    ".section-head",
+    ".category-card",
+    ".product-card",
+    ".custom-inner",
+    ".about-grid",
+    ".location-grid",
+    ".client-card",
+  ].join(",");
+  const elements = [...root.querySelectorAll(selectors)].filter(
+    (element) => !element.classList.contains("reveal-ready"),
+  );
+  if (!elements.length) return;
+  const reducedMotion =
+    typeof window.matchMedia === "function" &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (reducedMotion || !("IntersectionObserver" in window)) {
+    elements.forEach((element) =>
+      element.classList.add("reveal-ready", "is-visible"),
+    );
+    return;
+  }
+  if (!revealObserver)
+    revealObserver = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (!entry.isIntersecting) return;
+          entry.target.classList.add("is-visible");
+          revealObserver.unobserve(entry.target);
+        });
+      },
+      { threshold: 0.12, rootMargin: "0px 0px -7% 0px" },
+    );
+  elements.forEach((element) => {
+    element.classList.add("reveal-ready");
+    revealObserver.observe(element);
+  });
 }
 
 async function loadQuestions(productId) {
@@ -1219,7 +1339,7 @@ async function loadQuestions(productId) {
 async function showProductPage(slug) {
   const product = state.products.find((p) => p.slug === slug);
   if (!product) {
-    location.hash = "productos";
+    location.hash = "catalogo";
     return;
   }
   document
@@ -1397,6 +1517,10 @@ function handleRoute() {
     }
     showStandalonePage("#panel-general");
     renderAdminPanel();
+  } else if (route === "catalogo") {
+    showStandalonePage("#catalogo");
+    renderProducts();
+    refreshRevealAnimations(document.querySelector("#catalogo"));
   } else if (route === "politicas") {
     showStandalonePage("#politicas");
   } else if (route === "arrepentimiento") {
@@ -1413,6 +1537,7 @@ function handleRoute() {
   } else {
     showMainSections();
     renderCheckoutStatus(hash);
+    refreshRevealAnimations(document.querySelector("main"));
   }
 }
 async function renderCheckoutStatus(hash) {
@@ -3754,7 +3879,7 @@ async function deleteProduct(id) {
   await loadStoreData();
   renderAccount();
   renderAdminPanel();
-  if (location.hash.startsWith("#producto/")) location.hash = "productos";
+  if (location.hash.startsWith("#producto/")) location.hash = "catalogo";
   toast("Producto eliminado", "success");
 }
 
@@ -3791,11 +3916,13 @@ function closeModal() {
   document.body.style.overflow = "";
 }
 function bindStaticEvents() {
-  document.querySelector("#searchInput").oninput = (e) => {
-    state.search = e.target.value;
-    state.visibleCount = 24;
-    renderProducts();
-  };
+  document.querySelectorAll("#searchInput, #catalogSearchInput").forEach((input) => {
+    input.oninput = (event) => {
+      state.search = event.target.value;
+      state.visibleCount = CATALOG_PAGE_SIZE;
+      renderProducts();
+    };
+  });
   document
     .querySelectorAll("[data-open-cart]")
     .forEach((n) => (n.onclick = openCart));
@@ -3827,7 +3954,10 @@ function bindStaticEvents() {
           document.querySelector(".nav-links").classList.remove("open")),
     );
   document.querySelector("#backToProducts").onclick = () =>
-    (location.hash = "productos");
+    (location.hash = "catalogo");
+  document.querySelectorAll("[data-back-home]").forEach(
+    (button) => (button.onclick = () => (location.hash = "inicio")),
+  );
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") {
       closeModal();
