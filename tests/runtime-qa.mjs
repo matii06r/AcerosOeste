@@ -413,7 +413,7 @@ const executable = html
   .replace('<script src="assets/vendor/supabase.js?v=1"></script>', "")
   .replace('<script src="config.js"></script>', "")
   .replace(
-    '<script src="app.js?v=33"></script>',
+    '<script src="app.js?v=34"></script>',
     `<script>${app.replaceAll("</script>", "<\\/script>")}</script>`,
   );
 const errors = [];
@@ -649,6 +649,19 @@ await new Promise((resolve) => setTimeout(resolve, 40));
 assert(
   d.querySelectorAll(".gallery-thumb").length === 2,
   "La galería no muestra fotos y videos",
+);
+assert(
+  d.querySelector("#galleryMain")?.classList.contains("has-image"),
+  "La imagen principal no conserva su proporción natural",
+);
+const videoThumb = [...d.querySelectorAll(".gallery-thumb")].find(
+  (thumb) => thumb.dataset.video === "true",
+);
+videoThumb?.click();
+assert(
+  d.querySelector("#galleryMain")?.classList.contains("has-video") &&
+    !d.querySelector("#galleryMain")?.classList.contains("has-image"),
+  "La galería no adapta correctamente el visor al cambiar a un video",
 );
 assert(
   d.querySelector(".product-description-section")?.textContent.includes(
@@ -1130,8 +1143,10 @@ assert(
     multiMediaMigration.includes("'video/quicktime'") &&
     multiMediaMigration.includes("file_size_limit = 52428800") &&
     app.includes('class="product-description-section"') &&
-    styles.includes(".product-image{height:auto;aspect-ratio:1/1") &&
-    styles.includes(".product-page-image img{width:100%;height:100%;padding:12px;object-fit:contain") &&
+    styles.includes(".product-image img{display:block;width:100%;height:auto;padding:0") &&
+    styles.includes(".product-page-image.has-image{height:auto;aspect-ratio:auto") &&
+    styles.includes(".product-card .admin-actions{margin:10px 0 0}") &&
+    styles.includes("white-space:nowrap") &&
     styles.includes(".gallery-thumbs{display:flex") &&
     styles.includes(".product-description-section+.questions"),
   "La carga multimedia, la imagen completa o la descripción ordenada quedó incompleta",
@@ -1329,5 +1344,5 @@ if (errors.length) {
   process.exit(1);
 }
 console.log(
-  "QA OK v33: multimedia acumulativa, imágenes completas y descripción ordenada",
+  "QA OK v34: imágenes sin marcos, galería adaptable y botones alineados",
 );

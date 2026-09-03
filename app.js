@@ -1068,9 +1068,9 @@ function productVisual(product) {
 function productGallery(product) {
   const media = product.images || [];
   if (!media.length)
-    return `<div class="product-page-image">${productVisual(product)}</div>`;
+    return `<div class="product-page-image product-page-image-fallback">${productVisual(product)}</div>`;
   const main = media[0];
-  return `<div class="product-gallery"><div id="galleryMain" class="product-page-image">${isVideoUrl(main) ? `<video src="${escapeHtml(main)}" controls playsinline preload="metadata"></video>` : `<img src="${escapeHtml(main)}" alt="${escapeHtml(product.name)}">`}</div>${media.length > 1 ? `<div class="gallery-thumbs" aria-label="Galería del producto">${media.map((url, index) => `<button type="button" class="gallery-thumb ${index === 0 ? "active" : ""}" data-media="${escapeHtml(url)}" data-video="${isVideoUrl(url)}" aria-label="${isVideoUrl(url) ? `Reproducir video ${index + 1}` : `Ver foto ${index + 1}`}">${isVideoUrl(url) ? `<span class="gallery-video-thumb"><i>▶</i><small>Video ${index + 1}</small></span>` : `<img src="${escapeHtml(url)}" alt="Vista ${index + 1}" loading="lazy">`}</button>`).join("")}</div>` : ""}</div>`;
+  return `<div class="product-gallery"><div id="galleryMain" class="product-page-image ${isVideoUrl(main) ? "has-video" : "has-image"}">${isVideoUrl(main) ? `<video src="${escapeHtml(main)}" controls playsinline preload="metadata"></video>` : `<img src="${escapeHtml(main)}" alt="${escapeHtml(product.name)}">`}</div>${media.length > 1 ? `<div class="gallery-thumbs" aria-label="Galería del producto">${media.map((url, index) => `<button type="button" class="gallery-thumb ${index === 0 ? "active" : ""}" data-media="${escapeHtml(url)}" data-video="${isVideoUrl(url)}" aria-label="${isVideoUrl(url) ? `Reproducir video ${index + 1}` : `Ver foto ${index + 1}`}">${isVideoUrl(url) ? `<span class="gallery-video-thumb"><i>▶</i><small>Video ${index + 1}</small></span>` : `<img src="${escapeHtml(url)}" alt="Vista ${index + 1}" loading="lazy">`}</button>`).join("")}</div>` : ""}</div>`;
 }
 function renderCategories() {
   const list = state.categories;
@@ -1249,8 +1249,12 @@ async function showProductPage(slug) {
   document.querySelectorAll("[data-media]").forEach((button) => {
     button.onclick = () => {
       const url = button.dataset.media;
-      document.querySelector("#galleryMain").innerHTML =
-        button.dataset.video === "true"
+      const galleryMain = document.querySelector("#galleryMain");
+      const isVideo = button.dataset.video === "true";
+      galleryMain.classList.toggle("has-video", isVideo);
+      galleryMain.classList.toggle("has-image", !isVideo);
+      galleryMain.innerHTML =
+        isVideo
           ? `<video src="${escapeHtml(url)}" controls autoplay playsinline></video>`
           : `<img src="${escapeHtml(url)}" alt="${escapeHtml(product.name)}">`;
       document
